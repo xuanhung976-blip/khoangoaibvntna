@@ -35,7 +35,11 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
             setError('Đăng nhập thất bại');
         }
     } catch (err: any) {
-        console.error("Login error:", err);
+        console.error('[LOGIN ERROR]', {
+            username,
+            message: err?.message || String(err),
+            error: err,
+        });
         // Handle specific error messages from backend if available
         const msg = typeof err === 'string' ? err : (err.message || 'Lỗi kết nối server');
         setError(msg.includes('ScriptError') ? 'Lỗi hệ thống backend' : msg);

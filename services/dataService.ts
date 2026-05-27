@@ -28,7 +28,7 @@ import { callApi } from './apiClient';
 // Giá»¯ nguyÃªn signature cÅ© cá»§a runGAS Ä‘á»ƒ khÃ´ng pháº£i sá»­a exports bÃªn dÆ°á»›i.
 const runGAS = (funcName: string, ...args: any[]): Promise<any> => {
     const payload = { funcName, args };
-    return callApi('', payload);
+    return callApi('/api/rpc', payload);
 };
 
 const getCurrentRole = (): Role => {

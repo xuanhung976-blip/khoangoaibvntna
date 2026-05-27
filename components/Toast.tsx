@@ -11,8 +11,15 @@ interface Toast {
 // We implement a simple event-based system for this example to avoid complex context wrapping in the limited file output
 // Ideally this would be a Context
 const listeners: ((toast: Toast) => void)[] = [];
+const lastShownByMessage = new Map<string, number>();
 
 export const showToast = (message: string, type: ToastType = 'info') => {
+    const key = `${type}:${message}`;
+    const now = Date.now();
+    const lastShownAt = lastShownByMessage.get(key) || 0;
+    if (now - lastShownAt < 2000) return;
+    lastShownByMessage.set(key, now);
+
     const toast = { id: Date.now(), message, type };
     listeners.forEach(l => l(toast));
 };

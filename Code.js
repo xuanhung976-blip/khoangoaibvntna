@@ -6,6 +6,61 @@ function doGet(e) {
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
+function jsonOutput(payload) {
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  try {
+    const body = JSON.parse((e.postData && e.postData.contents) || '{}');
+    const funcName = body.funcName;
+    const args = Array.isArray(body.args) ? body.args : [];
+
+    if (!funcName) {
+      throw new Error('funcName is required');
+    }
+
+    const data = dispatchRpc(funcName, args);
+    return jsonOutput({ success: true, data });
+  } catch (err) {
+    return jsonOutput({
+      success: false,
+      error: err && err.message ? err.message : String(err)
+    });
+  }
+}
+
+function dispatchRpc(funcName, args) {
+  switch (funcName) {
+    case 'apiGet':
+      return apiGet(args[0]);
+    case 'apiAdd':
+      return apiAdd(args[0], args[1], args[2]);
+    case 'apiUpdate':
+      return apiUpdate(args[0], args[1], args[2], args[3]);
+    case 'apiDelete':
+      return apiDelete(args[0], args[1], args[2]);
+    case 'loginUser':
+      return loginUser(args[0], args[1]);
+    case 'getDashboardOverview':
+      return getDashboardOverview();
+    case 'getVipPatientsJoined':
+      return getVipPatientsJoined();
+    case 'addVipPatientSafe':
+      return addVipPatientSafe(args[0], args[1]);
+    case 'getDoctors':
+      return getDoctors();
+    case 'batchSaveDailyOnCall':
+      return batchSaveDailyOnCall(args[0]);
+    case 'saveRolePermissions':
+      return saveRolePermissions(args[0], args[1]);
+    default:
+      throw new Error('Unknown funcName: ' + funcName);
+  }
+}
+
 // --- UTILS ---
 
 function getSheet(name) {
@@ -589,4 +644,47 @@ function batchSaveDailyOnCall(shifts) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function toBool(value) {
+  return value === true || value === 'TRUE' || value === 'true' || value === '1' || value === 1;
+}
+
+function saveRolePermissions(permissions, userRole) {
+  if (!Array.isArray(permissions)) {
+    throw new Error('saveRolePermissions requires permissions array');
+  }
+
+  const existing = apiGet('Roles_Permission');
+
+  permissions.forEach(perm => {
+    if (!perm || !perm.role || !perm.module) {
+      throw new Error('Each permission requires role and module');
+    }
+
+    const role = String(perm.role);
+    const module = String(perm.module);
+    const current = existing.find(item =>
+      String(item.role) === role && String(item.module) === module
+    );
+
+    const payload = {
+      id: current ? current.id : (perm.id || (role + '_' + module)),
+      role,
+      module,
+      canView: toBool(perm.canView),
+      canAdd: toBool(perm.canAdd),
+      canEdit: toBool(perm.canEdit),
+      canDelete: toBool(perm.canDelete)
+    };
+
+    if (current && current.id) {
+      apiUpdate('Roles_Permission', current.id, payload, userRole);
+    } else {
+      apiAdd('Roles_Permission', payload, userRole);
+      existing.push(payload);
+    }
+  });
+
+  return { success: true };
 }
