@@ -1,0 +1,8 @@
+{
+  "name": "KHOA NGOAI",
+  "description": "A Progressive Web App for managing the General Surgery Department, featuring patient management, inventory tracking, and AI-powered assistance.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
