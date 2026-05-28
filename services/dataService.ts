@@ -8,6 +8,7 @@ import {
     ResearchTopic,
     ScientificMeeting,
     DailyBriefing,
+    BriefingTask,
     NewTechnique,
     CommunicationContent,
     Zone5S,
@@ -105,14 +106,102 @@ export const deleteScientificMeeting = (id: string) => runGAS('apiDelete', 'Sinh
 
 // 8. BRIEFINGS
 export const getBriefings = () => runGAS('apiGet', 'GiaoBan_Log');
-export const addBriefing = (b: DailyBriefing) => {
-    const payload = { ...b, congViecJson: JSON.stringify(b.tasks || []) };
-    return runGAS('apiAdd', 'GiaoBan_Log', payload, getCurrentRole());
+
+const getBriefingTaskSourceId = (task: Partial<BriefingTask>, index: number) =>
+    String(task.id || `T${index + 1}`);
+
+const buildBriefingStaffTask = (
+    briefingId: string,
+    briefing: Partial<DailyBriefing>,
+    task: Partial<BriefingTask>,
+    index: number,
+    existing?: Partial<StaffTask>,
+): Partial<StaffTask> => {
+    const assigneeUsername = String(task.assigneeUsername || task.assignee || '');
+    const assigneeName = String(task.assigneeName || task.assignee || assigneeUsername);
+
+    return {
+        ...existing,
+        userId: assigneeUsername,
+        tieuDe: String(task.taskName || ''),
+        noiDung: String(briefing.content || ''),
+        nguoiGiao: String(briefing.host || ''),
+        ngayGiao: String(briefing.date || new Date().toISOString().split('T')[0]),
+        hanHoanThanh: String(task.deadline || ''),
+        mucDoUuTien: existing?.mucDoUuTien || 'Trung bÃ¬nh',
+        trangThai: existing?.trangThai || 'ChÆ°a lÃ m',
+        tienDo: existing?.tienDo ?? 0,
+        ketQua: existing?.ketQua || '',
+        ghiChu: existing?.ghiChu || '',
+        sourceType: 'GIAO_BAN',
+        sourceId: briefingId,
+        sourceTaskId: getBriefingTaskSourceId(task, index),
+        sourceTaskIndex: index,
+        assigneeUsername,
+        assigneeName,
+        sourceDate: String(briefing.date || ''),
+    };
 };
-export const updateBriefing = (id: string, b: Partial<DailyBriefing>) => {
+
+export const syncBriefingTasksToStaffTasks = async (briefingId: string, briefing: Partial<DailyBriefing>) => {
+    if (!briefingId) return;
+
+    const briefingTasks = Array.isArray(briefing.tasks) ? briefing.tasks : [];
+    const staffTasks: StaffTask[] = await runGAS('apiGet', 'CongViec_NhanVien');
+    const existingFromBriefing = (Array.isArray(staffTasks) ? staffTasks : []).filter(
+        task => task.sourceType === 'GIAO_BAN' && task.sourceId === briefingId
+    );
+    const activeSourceTaskIds = new Set<string>();
+    const activeSourceTaskIndexes = new Set<string>();
+
+    for (let index = 0; index < briefingTasks.length; index += 1) {
+        const task = briefingTasks[index];
+        if (!String(task.taskName || '').trim() || !String(task.assigneeUsername || task.assignee || '').trim()) continue;
+
+        const sourceTaskId = getBriefingTaskSourceId(task, index);
+        activeSourceTaskIds.add(sourceTaskId);
+        activeSourceTaskIndexes.add(String(index));
+        const existing = existingFromBriefing.find(item => item.sourceTaskId === sourceTaskId || String(item.sourceTaskIndex) === String(index));
+        const payload = buildBriefingStaffTask(briefingId, briefing, task, index, existing);
+
+        if (existing?.id) {
+            await runGAS('apiUpdate', 'CongViec_NhanVien', existing.id, payload, getCurrentRole());
+        } else {
+            await runGAS('apiAdd', 'CongViec_NhanVien', payload, getCurrentRole());
+        }
+    }
+
+    for (const existing of existingFromBriefing) {
+        const sourceTaskId = String(existing.sourceTaskId || '');
+        const stillExists = sourceTaskId ? activeSourceTaskIds.has(sourceTaskId) : activeSourceTaskIndexes.has(String(existing.sourceTaskIndex || ''));
+        if (stillExists) continue;
+
+        if (Number(existing.tienDo || 0) > 0) {
+            const note = String(existing.ghiChu || '');
+            await runGAS('apiUpdate', 'CongViec_NhanVien', existing.id, {
+                ...existing,
+                trangThai: 'Táº¡m dá»«ng',
+                ghiChu: note.includes('ÄÃ£ bá» khá»i giao ban') ? note : `${note ? `${note}\n` : ''}ÄÃ£ bá» khá»i giao ban`,
+            }, getCurrentRole());
+        } else {
+            await runGAS('apiDelete', 'CongViec_NhanVien', existing.id, getCurrentRole());
+        }
+    }
+};
+
+export const addBriefing = async (b: DailyBriefing) => {
+    const payload = { ...b, congViecJson: JSON.stringify(b.tasks || []) };
+    const result = await runGAS('apiAdd', 'GiaoBan_Log', payload, getCurrentRole());
+    const briefingId = String(result?.id || payload.id || '');
+    await syncBriefingTasksToStaffTasks(briefingId, { ...payload, id: briefingId });
+    return result;
+};
+export const updateBriefing = async (id: string, b: Partial<DailyBriefing>) => {
     const payload = { ...b };
     if (b.tasks) payload['congViecJson'] = JSON.stringify(b.tasks);
-    return runGAS('apiUpdate', 'GiaoBan_Log', id, payload, getCurrentRole());
+    const result = await runGAS('apiUpdate', 'GiaoBan_Log', id, payload, getCurrentRole());
+    await syncBriefingTasksToStaffTasks(id, { ...payload, id });
+    return result;
 };
 
 // 9. TECHNIQUES

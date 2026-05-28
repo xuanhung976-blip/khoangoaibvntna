@@ -109,6 +109,8 @@ export interface BriefingTask {
     id: string;
     taskName: string;
     assignee: string;
+    assigneeUsername?: string;
+    assigneeName?: string;
     deadline: string;
     progress: number;
 }
@@ -209,6 +211,13 @@ export interface StaffTask {
     tienDo: number | string;
     ketQua?: string;
     ghiChu?: string;
+    sourceType?: string;
+    sourceId?: string;
+    sourceTaskId?: string;
+    sourceTaskIndex?: number | string;
+    assigneeUsername?: string;
+    assigneeName?: string;
+    sourceDate?: string;
 }
 
 export interface StaffEvaluation {

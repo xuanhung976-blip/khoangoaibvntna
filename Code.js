@@ -69,7 +69,32 @@ function getSheet(name) {
   if (!sheet) {
     throw new Error(`Sheet "${name}" not found. Please run initialization.`);
   }
+  ensureKnownSheetColumns(sheet, name);
   return sheet;
+}
+
+function ensureKnownSheetColumns(sheet, name) {
+  const requiredColumnsBySheet = {
+    CongViec_NhanVien: [
+      'sourceType',
+      'sourceId',
+      'sourceTaskId',
+      'sourceTaskIndex',
+      'assigneeUsername',
+      'assigneeName',
+      'sourceDate'
+    ]
+  };
+
+  const requiredColumns = requiredColumnsBySheet[name];
+  if (!requiredColumns || !requiredColumns.length) return;
+
+  const lastCol = sheet.getLastColumn();
+  const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String) : [];
+  const missingColumns = requiredColumns.filter(column => !headers.includes(column));
+  if (!missingColumns.length) return;
+
+  sheet.getRange(1, headers.length + 1, 1, missingColumns.length).setValues([missingColumns]);
 }
 
 // Convert "MyColumnName" to "myColumnName", strict "ID" -> "id"
