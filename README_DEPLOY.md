@@ -1,7 +1,7 @@
-# Deploy frontend len Vercel
+﻿# Deploy frontend len Vercel
 
 Backend GAS URL:
-https://script.google.com/macros/s/AKfycbz_vOZwwXPHaJXj29KWj-OOAB0ZarWgXWy_cBr9l4aofoRZc-Vdoi8NudBaMct8crlQ4g/exec
+https://script.google.com/macros/s/AKfycbyDFOw5JmJf88YYYS3mU7IorWF_F2tUyuNOF8belqwats3xTd1njTI_ab0ahonrvzHrQA/exec
 
 Vercel settings:
 - Framework Preset: Vite
@@ -10,7 +10,7 @@ Vercel settings:
 
 Environment Variables tren Vercel:
 - Name: GAS_API_URL
-- Value: https://script.google.com/macros/s/AKfycbz_vOZwwXPHaJXj29KWj-OOAB0ZarWgXWy_cBr9l4aofoRZc-Vdoi8NudBaMct8crlQ4g/exec
+- Value: https://script.google.com/macros/s/AKfycbyDFOw5JmJf88YYYS3mU7IorWF_F2tUyuNOF8belqwats3xTd1njTI_ab0ahonrvzHrQA/exec
 
 Local fullstack test:
 - Tao `.env.local` voi `GAS_API_URL=...`
