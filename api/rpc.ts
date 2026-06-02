@@ -71,11 +71,11 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  const gasApiUrl = process.env.GAS_API_URL;
+  const gasApiUrl = process.env.GAS_API_URL || process.env.GAS_WEB_APP_URL;
 
   if (!gasApiUrl) {
     console.error('[RPC PROXY] Missing GAS_API_URL');
-    errorResponse(res, 500, 'RPC_CONFIG_ERROR', 'Missing GAS_API_URL on Vercel server');
+    errorResponse(res, 500, 'RPC_CONFIG_ERROR', 'Missing GAS_API_URL or GAS_WEB_APP_URL on Vercel server');
     return;
   }
 
