@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity,
-  AlertCircle,
   AlertTriangle,
   ArrowRight,
   CalendarDays,
@@ -14,7 +13,6 @@ import {
   RefreshCw,
   ShieldAlert,
   Stethoscope,
-  User,
   Users,
   Wrench,
 } from 'lucide-react';
@@ -42,6 +40,7 @@ import {
 
 type AlertSeverity = 'info' | 'warning' | 'danger';
 type AlertSection = 'urgent' | 'today' | 'inventory' | 'operations';
+type SummaryTone = 'blue' | 'amber' | 'violet' | 'indigo' | 'red' | 'emerald' | 'orange' | 'cyan';
 
 type DashboardAlert = {
   id: string;
@@ -93,14 +92,38 @@ const formatDateKey = (date: Date) => {
   return `${y}-${m}-${d}`;
 };
 
-const parseDate = (value: unknown) => {
+const normalizeText = (value: unknown) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+const parseFlexibleDate = (value: unknown) => {
   if (!value) return null;
   const raw = String(value).trim();
   if (!raw) return null;
+
+  const ddmmyyyy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (ddmmyyyy) {
+    const [, d, m, y] = ddmmyyyy;
+    const date = new Date(Number(y), Number(m) - 1, Number(d));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const yyyymmdd = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (yyyymmdd) {
+    const [, y, m, d] = yyyymmdd;
+    const date = new Date(Number(y), Number(m) - 1, Number(d));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
   const date = new Date(raw.includes('T') ? raw : `${raw}T00:00:00`);
   if (Number.isNaN(date.getTime())) return null;
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 };
+
+const parseDate = parseFlexibleDate;
 
 const daysBetween = (from: Date, to: Date) =>
   Math.round((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
@@ -114,6 +137,15 @@ const text = (...values: unknown[]) =>
   values.map(value => String(value || '').trim()).find(Boolean) || '';
 
 const lowerText = (value: unknown) => String(value || '').toLowerCase();
+
+const pickField = (record: unknown, fields: string[]) => {
+  const item = (record || {}) as Record<string, unknown>;
+  for (const field of fields) {
+    const value = item[field];
+    if (value !== undefined && value !== null && String(value).trim()) return value;
+  }
+  return '';
+};
 
 const isDoneTask = (task: Partial<StaffTask>) => {
   const status = lowerText(task.trangThai);
@@ -139,6 +171,49 @@ const isToday = (value: unknown, todayKey: string) => {
   return date ? formatDateKey(date) === todayKey : false;
 };
 
+const isActivePatientV2 = (patient: Partial<Patient>) => {
+  const status = normalizeText(pickField(patient, ['status', 'trangThai', 'TrangThai']));
+  return !['ravien', 'ra vien', 'xuat vien', 'discharged', 'da xuat vien'].some(token =>
+    status.includes(normalizeText(token))
+  );
+};
+
+const isWaitingForSurgeryV2 = (patient: Partial<Patient>) => {
+  const status = normalizeText(
+    text(
+      pickField(patient, ['status', 'trangThai', 'TrangThai']),
+      pickField(patient, ['surgeryStatus', 'trangThaiMo', 'TrangThaiMo', 'approvalStatus', 'phauThuatStatus'])
+    )
+  );
+
+  return [
+    'chomo',
+    'cho mo',
+    'cho_mo',
+    'pending surgery',
+    'pending_surgery',
+    'waiting surgery',
+    'waiting_surgery',
+    'choduyet',
+    'cho duyet',
+  ].some(token => status.includes(normalizeText(token)));
+};
+
+const getSurgeryDateValue = (patient: Partial<Patient>) =>
+  pickField(patient, [
+    'surgeryDate',
+    'actualSurgeryDate',
+    'ngayMo',
+    'operationDate',
+    'scheduledDate',
+    'ngayPhauThuat',
+    'NgayMo',
+    'NgayPhauThuat',
+  ]);
+
+const isSurgeryTodayV2 = (patient: Partial<Patient>, todayKey: string) =>
+  isToday(getSurgeryDateValue(patient), todayKey);
+
 const isBadEquipmentCondition = (equipment: Partial<MedicalEquipment>) => {
   const condition = lowerText(equipment.condition);
   return ['broken', 'repairing', 'hỏng', 'hong', 'sửa', 'sua', 'bảo trì', 'bao tri', 'không hoạt động'].some(token =>
@@ -152,10 +227,24 @@ const priorityClass = (severity: AlertSeverity) => {
   return 'bg-blue-50 text-blue-700 border-blue-200';
 };
 
-const summaryCardClass = (severity: AlertSeverity) => {
-  if (severity === 'danger') return 'bg-red-500';
-  if (severity === 'warning') return 'bg-amber-500';
-  return 'bg-blue-500';
+const severityBorderClass = (severity: AlertSeverity) => {
+  if (severity === 'danger') return 'border-l-red-400';
+  if (severity === 'warning') return 'border-l-amber-400';
+  return 'border-l-blue-400';
+};
+
+const summaryToneClass = (tone: SummaryTone) => {
+  const classes: Record<SummaryTone, string> = {
+    blue: 'bg-blue-50 text-blue-700 border-blue-100',
+    amber: 'bg-amber-50 text-amber-700 border-amber-100',
+    violet: 'bg-violet-50 text-violet-700 border-violet-100',
+    indigo: 'bg-indigo-50 text-indigo-700 border-indigo-100',
+    red: 'bg-red-50 text-red-700 border-red-100',
+    emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+    orange: 'bg-orange-50 text-orange-700 border-orange-100',
+    cyan: 'bg-cyan-50 text-cyan-700 border-cyan-100',
+  };
+  return classes[tone];
 };
 
 const loadList = async <T,>(loader: () => Promise<T[]>): Promise<T[]> => {
@@ -225,6 +314,7 @@ export const Dashboard: React.FC = () => {
     const today = todayDate();
     const todayKey = formatDateKey(today);
     const alerts: DashboardAlert[] = [];
+    const activePatients = data.patients.filter(isActivePatientV2);
 
     const activeTasks = data.staffTasks.filter(task => !isDoneTask(task) && !isPausedTask(task));
     const overdueTasks = activeTasks
@@ -288,24 +378,30 @@ export const Dashboard: React.FC = () => {
       });
     });
 
-    const waitingSurgeryPatients = data.patients.filter(isWaitingSurgery);
-    const surgeryToday = data.patients.filter(patient => isToday(patient.surgeryDate || patient.actualSurgeryDate, todayKey));
-    [...waitingSurgeryPatients.slice(0, 3), ...surgeryToday.slice(0, 3)].forEach(patient => {
-      alerts.push({
-        id: `surgery-${patient.id}-${patient.surgeryDate || patient.actualSurgeryDate || patient.status}`,
-        type: 'surgery',
-        title: patient.name || 'Bệnh nhân phẫu thuật',
-        description: `${patient.room || '-'} / ${patient.bed || '-'} · ${patient.diagnosis || ''}`,
-        severity: isToday(patient.surgeryDate || patient.actualSurgeryDate, todayKey) ? 'danger' : 'warning',
-        section: 'today',
-        module: 'Phẫu thuật',
-        entityId: patient.id,
-        assigneeName: text(patient.surgeon, patient.treatingDoctor),
-        date: String(patient.surgeryDate || patient.actualSurgeryDate || ''),
-        link: '/surgery-approval',
-        badge: isToday(patient.surgeryDate || patient.actualSurgeryDate, todayKey) ? 'Mổ hôm nay' : 'Chờ mổ',
+    const waitingSurgeryPatients = activePatients.filter(isWaitingForSurgeryV2);
+    const surgeryToday = activePatients.filter(patient => isSurgeryTodayV2(patient, todayKey));
+    [...surgeryToday.slice(0, 4), ...waitingSurgeryPatients.slice(0, 4)]
+      .filter((patient, index, list) => {
+        const key = patient.id || patient.patientId || `${patient.name}-${patient.room}-${patient.bed}`;
+        return list.findIndex(item => (item.id || item.patientId || `${item.name}-${item.room}-${item.bed}`) === key) === index;
+      })
+      .slice(0, 6)
+      .forEach(patient => {
+        alerts.push({
+          id: `surgery-${patient.id || patient.patientId}-${getSurgeryDateValue(patient) || patient.status}`,
+          type: 'surgery',
+          title: patient.name || 'Bệnh nhân phẫu thuật',
+          description: `${patient.room || '-'} / ${patient.bed || '-'} · ${text(patient.diagnosis, patient.surgeryMethod)}`,
+          severity: isSurgeryTodayV2(patient, todayKey) ? 'danger' : 'warning',
+          section: 'today',
+          module: 'Phẫu thuật',
+          entityId: patient.id,
+          assigneeName: text(patient.surgeon, patient.treatingDoctor),
+          date: String(getSurgeryDateValue(patient) || ''),
+          link: '/surgery-approval',
+          badge: isSurgeryTodayV2(patient, todayKey) ? 'Mổ hôm nay' : 'Chờ mổ',
+        });
       });
-    });
 
     const expiringMedicines = data.medicines
       .map(medicine => {
@@ -377,7 +473,7 @@ export const Dashboard: React.FC = () => {
       });
     });
 
-    const todayShift = data.shifts.find(shift => String(shift.date || '') === todayKey);
+    const todayShift = data.shifts.find(shift => isToday(shift.date, todayKey));
     if (todayShift) {
       alerts.push({
         id: `shift-${todayShift.id || todayKey}`,
@@ -392,8 +488,6 @@ export const Dashboard: React.FC = () => {
       });
     }
 
-    const surgeryTodayCount = surgeryToday.length;
-
     return {
       todayKey,
       todayShift,
@@ -407,10 +501,12 @@ export const Dashboard: React.FC = () => {
       openFiveS,
       lowFiveS,
       counts: {
+        activePatients: activePatients.length,
         overdueTasks: overdueTasks.length,
         briefingTasks: briefingTasks.length,
         vipPatients: data.vipPatients.length,
-        surgery: waitingSurgeryPatients.length + surgeryTodayCount,
+        waitingSurgery: waitingSurgeryPatients.length,
+        surgeryToday: surgeryToday.length,
         medicines: expiringMedicines.length,
         equipment: equipmentAlerts.length,
       },
@@ -424,17 +520,29 @@ export const Dashboard: React.FC = () => {
     { key: 'operations', title: '5S & vận hành', icon: ClipboardCheck },
   ];
 
-  const SummaryCard = ({ title, value, icon: Icon, severity, link }: { title: string; value: number | string; icon: React.ElementType; severity: AlertSeverity; link: string }) => (
+  const SummaryCard = ({
+    title,
+    value,
+    icon: Icon,
+    tone,
+    link,
+  }: {
+    title: string;
+    value: number | string;
+    icon: React.ElementType;
+    tone: SummaryTone;
+    link: string;
+  }) => (
     <button
       onClick={() => navigate(link)}
-      className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all text-left overflow-hidden relative"
+      className="group bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-0.5 transition-all text-left overflow-hidden relative min-h-[112px]"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-slate-500">{title}</p>
-          <p className="mt-1 text-2xl font-bold text-slate-800">{value}</p>
+      <div className="flex h-full items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-500 leading-snug">{title}</p>
+          <p className="mt-2 text-3xl font-bold tracking-normal text-slate-900">{value}</p>
         </div>
-        <div className={`p-2.5 rounded-lg ${summaryCardClass(severity)} text-white`}>
+        <div className={`p-2.5 rounded-xl border ${summaryToneClass(tone)} group-hover:scale-105 transition-transform shrink-0`}>
           <Icon className="h-5 w-5" />
         </div>
       </div>
@@ -444,7 +552,7 @@ export const Dashboard: React.FC = () => {
   const AlertRow = ({ alert }: { alert: DashboardAlert }) => (
     <button
       onClick={() => navigate(alert.link)}
-      className="w-full text-left p-3 rounded-lg border border-slate-100 hover:border-blue-200 hover:bg-blue-50/40 transition-colors"
+      className={`w-full text-left p-3 rounded-lg border border-l-4 border-slate-100 ${severityBorderClass(alert.severity)} hover:border-blue-200 hover:bg-blue-50/40 transition-colors`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -484,7 +592,7 @@ export const Dashboard: React.FC = () => {
               src={APP_LOGO_URL}
               alt=""
               referrerPolicy="no-referrer"
-              className="h-14 w-14 rounded-full bg-white shadow-sm border border-slate-100 object-cover"
+              className="h-12 w-12 rounded-full bg-white shadow-sm border border-slate-100 object-cover"
             />
             <div>
               <p className="text-sm font-medium text-slate-500">Xin chào {currentUser?.fullName || currentUser?.username || 'bạn'}</p>
@@ -495,7 +603,7 @@ export const Dashboard: React.FC = () => {
           <button
             onClick={loadDashboard}
             disabled={refreshing}
-            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-60"
+            className="inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-60"
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
             Làm mới
@@ -504,48 +612,62 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex items-center gap-2">
-          <ShieldAlert className="h-5 w-5" />
-          {error}
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-5 w-5 shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={loadDashboard}
+            disabled={refreshing}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Thử lại
+          </button>
         </div>
       )}
 
-      <div className="bg-gradient-to-r from-blue-600 to-cyan-700 rounded-xl shadow-sm p-5 text-white">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold flex items-center gap-2">
-            <CalendarDays className="h-5 w-5" /> Trực hôm nay
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <SummaryCard title="Tổng bệnh nhân" value={dashboard.counts.activePatients} icon={Users} tone="blue" link="/clinical" />
+        <SummaryCard title="Chờ mổ" value={dashboard.counts.waitingSurgery} icon={Activity} tone="amber" link="/surgery-approval" />
+        <SummaryCard title="Mổ hôm nay" value={dashboard.counts.surgeryToday} icon={Stethoscope} tone="violet" link="/surgery-approval" />
+        <SummaryCard title="BN cần lưu ý" value={dashboard.counts.vipPatients} icon={ShieldAlert} tone="indigo" link="/vip-patients" />
+        <SummaryCard title="Việc quá hạn" value={dashboard.counts.overdueTasks} icon={AlertTriangle} tone="red" link="/staff-performance" />
+        <SummaryCard title="Giao ban chưa xong" value={dashboard.counts.briefingTasks} icon={ClipboardCheck} tone="emerald" link="/staff-performance" />
+        <SummaryCard title="Thuốc cận hạn" value={dashboard.counts.medicines} icon={Package} tone="orange" link="/inventory" />
+        <SummaryCard title="Máy cần xử lý" value={dashboard.counts.equipment} icon={Wrench} tone="cyan" link="/inventory" />
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+            <CalendarDays className="h-5 w-5 text-blue-600" /> Trực hôm nay
           </h2>
-          <button onClick={() => navigate('/shifts')} className="text-xs bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full transition-colors">
+          <button onClick={() => navigate('/shifts')} className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors">
             Xem lịch
           </button>
         </div>
         {dashboard.todayShift ? (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="bg-white/10 rounded-lg p-3 border border-white/10">
-              <p className="text-xs text-blue-100 uppercase mb-1">Bác sĩ trực</p>
-              <div className="flex items-center gap-2 font-semibold"><Stethoscope className="h-5 w-5 text-yellow-200" /> {dashboard.todayShift.doctor || '---'}</div>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+              <p className="text-xs font-bold uppercase text-slate-400 mb-1">Bác sĩ trực</p>
+              <div className="flex items-center gap-2 font-semibold text-slate-800"><Stethoscope className="h-4 w-4 text-amber-600" /> {dashboard.todayShift.doctor || '---'}</div>
             </div>
-            <div className="bg-white/10 rounded-lg p-3 border border-white/10">
-              <p className="text-xs text-blue-100 uppercase mb-1">Điều dưỡng 1</p>
-              <div className="flex items-center gap-2 font-semibold"><HeartPulse className="h-5 w-5 text-pink-200" /> {dashboard.todayShift.nurse1 || '---'}</div>
+            <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+              <p className="text-xs font-bold uppercase text-slate-400 mb-1">Điều dưỡng 1</p>
+              <div className="flex items-center gap-2 font-semibold text-slate-800"><HeartPulse className="h-4 w-4 text-rose-600" /> {dashboard.todayShift.nurse1 || '---'}</div>
             </div>
-            <div className="bg-white/10 rounded-lg p-3 border border-white/10">
-              <p className="text-xs text-blue-100 uppercase mb-1">Điều dưỡng 2</p>
-              <div className="flex items-center gap-2 font-semibold"><HeartPulse className="h-5 w-5 text-pink-200" /> {dashboard.todayShift.nurse2 || '---'}</div>
+            <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+              <p className="text-xs font-bold uppercase text-slate-400 mb-1">Điều dưỡng 2</p>
+              <div className="flex items-center gap-2 font-semibold text-slate-800"><HeartPulse className="h-4 w-4 text-rose-600" /> {dashboard.todayShift.nurse2 || '---'}</div>
             </div>
           </div>
         ) : (
-          <div className="bg-white/10 rounded-lg p-4 border border-white/10 text-sm">Chưa có dữ liệu lịch trực hôm nay.</div>
+          <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">
+            Chưa có lịch trực hôm nay.
+          </div>
         )}
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
-        <SummaryCard title="Việc quá hạn" value={dashboard.counts.overdueTasks} icon={AlertTriangle} severity={dashboard.counts.overdueTasks ? 'danger' : 'info'} link="/staff-performance" />
-        <SummaryCard title="Việc giao ban chưa xong" value={dashboard.counts.briefingTasks} icon={ClipboardCheck} severity={dashboard.counts.briefingTasks ? 'warning' : 'info'} link="/staff-performance" />
-        <SummaryCard title="BN cần lưu ý" value={dashboard.counts.vipPatients} icon={Users} severity={dashboard.counts.vipPatients ? 'warning' : 'info'} link="/vip-patients" />
-        <SummaryCard title="Chờ mổ / mổ hôm nay" value={dashboard.counts.surgery} icon={Activity} severity={dashboard.counts.surgery ? 'warning' : 'info'} link="/surgery-approval" />
-        <SummaryCard title="Thuốc cận hạn" value={dashboard.counts.medicines} icon={Package} severity={dashboard.counts.medicines ? 'danger' : 'info'} link="/inventory" />
-        <SummaryCard title="Máy cần xử lý" value={dashboard.counts.equipment} icon={Wrench} severity={dashboard.counts.equipment ? 'warning' : 'info'} link="/inventory" />
       </div>
 
       {dashboard.alerts.length === 0 ? (
