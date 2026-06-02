@@ -55,6 +55,8 @@ const toNumber = (value: unknown) => {
 
 const clampPercent = (value: unknown) => Math.max(0, Math.min(100, toNumber(value)));
 const clampScore = (value: unknown) => Math.max(0, Math.min(100, toNumber(value)));
+const isBriefingTask = (task: Partial<StaffTask>) =>
+  ['GIAO_BAN', 'daily_briefing'].includes(String(task.sourceType || ''));
 
 const normalizeStatus = (status: unknown): StaffTask['trangThai'] => {
   const value = String(status || '');
@@ -95,6 +97,9 @@ const normalizeTask = (task: Partial<StaffTask>): StaffTask => ({
   assigneeUsername: String(task.assigneeUsername || ''),
   assigneeName: String(task.assigneeName || ''),
   sourceDate: String(task.sourceDate || ''),
+  sourceLabel: String(task.sourceLabel || ''),
+  syncStatus: String(task.syncStatus || ''),
+  syncedAt: String(task.syncedAt || ''),
 });
 
 const calcScore = (item: Partial<StaffEvaluation>) => {
@@ -561,7 +566,7 @@ export const StaffPerformance: React.FC<StaffPerformanceProps> = ({ currentUser 
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-semibold text-slate-800">{task.tieuDe || '(Không tiêu đề)'}</h4>
-                          {task.sourceType === 'GIAO_BAN' && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">Từ giao ban</span>}
+                          {isBriefingTask(task) && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">Từ giao ban</span>}
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${taskBadge(task.trangThai)}`}>{task.trangThai}</span>
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${priorityBadge(task.mucDoUuTien)}`}>{task.mucDoUuTien}</span>
                         </div>

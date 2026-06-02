@@ -17,12 +17,17 @@ function doPost(e) {
     const body = JSON.parse((e.postData && e.postData.contents) || '{}');
     const funcName = body.funcName;
     const args = Array.isArray(body.args) ? body.args : [];
+    const sessionContext = {
+      sessionToken: body.sessionToken || '',
+      userAgent: body.userAgent || '',
+      ip: body.ip || ''
+    };
 
     if (!funcName) {
       throw new Error('funcName is required');
     }
 
-    const data = dispatchRpc(funcName, args);
+    const data = dispatchRpc(funcName, args, sessionContext);
     return jsonOutput({ success: true, data });
   } catch (err) {
     return jsonOutput({
@@ -32,30 +37,34 @@ function doPost(e) {
   }
 }
 
-function dispatchRpc(funcName, args) {
+function dispatchRpc(funcName, args, sessionContext) {
   switch (funcName) {
     case 'apiGet':
       return apiGet(args[0]);
     case 'apiAdd':
-      return apiAdd(args[0], args[1], args[2]);
+      return apiAdd(args[0], args[1], sessionContext);
     case 'apiUpdate':
-      return apiUpdate(args[0], args[1], args[2], args[3]);
+      return apiUpdate(args[0], args[1], args[2], sessionContext);
     case 'apiDelete':
-      return apiDelete(args[0], args[1], args[2]);
+      return apiDelete(args[0], args[1], sessionContext);
     case 'loginUser':
-      return loginUser(args[0], args[1]);
+      return loginUser(args[0], args[1], sessionContext);
+    case 'logoutUser':
+      return logoutUser(sessionContext.sessionToken || args[0], sessionContext);
+    case 'changeMyPassword':
+      return changeMyPassword(args[0], sessionContext);
     case 'getDashboardOverview':
       return getDashboardOverview();
     case 'getVipPatientsJoined':
       return getVipPatientsJoined();
     case 'addVipPatientSafe':
-      return addVipPatientSafe(args[0], args[1]);
+      return addVipPatientSafe(args[0], sessionContext);
     case 'getDoctors':
       return getDoctors();
     case 'batchSaveDailyOnCall':
-      return batchSaveDailyOnCall(args[0], args[1]);
+      return batchSaveDailyOnCall(args[0], sessionContext);
     case 'saveRolePermissions':
-      return saveRolePermissions(args[0], args[1]);
+      return saveRolePermissions(args[0], sessionContext);
     default:
       throw new Error('Unknown funcName: ' + funcName);
   }
@@ -75,7 +84,23 @@ function getSheet(name) {
 
 function getKnownSheetHeaders() {
   return {
-    Users: ['ID', 'Username', 'Password', 'FullName', 'Role', 'NhomChuyenMon', 'Active', 'CreatedAt', 'CanDeletePatient'],
+    Users: [
+      'ID',
+      'Username',
+      'Password',
+      'FullName',
+      'Role',
+      'NhomChuyenMon',
+      'Active',
+      'CreatedAt',
+      'CanDeletePatient',
+      'passwordHash',
+      'passwordSalt',
+      'passwordUpdatedAt',
+      'mustChangePassword',
+      'passwordResetAt',
+      'passwordVersion'
+    ],
     Roles_Permission: ['ID', 'Role', 'Module', 'CanView', 'CanAdd', 'CanEdit', 'CanDelete'],
     DS_BenhNhan: [
       'ID', 'Name', 'Dob', 'Gender', 'Room', 'Bed', 'TreatmentType', 'Status', 'Diagnosis',
@@ -105,7 +130,10 @@ function getKnownSheetHeaders() {
       'sourceTaskIndex',
       'assigneeUsername',
       'assigneeName',
-      'sourceDate'
+      'sourceDate',
+      'sourceLabel',
+      'syncStatus',
+      'syncedAt'
     ],
     DanhGia_NhanVien: [
       'ID',
@@ -152,6 +180,20 @@ function getKnownSheetHeaders() {
       'userAgent',
       'status',
       'errorMessage'
+    ],
+    Sessions: [
+      'id',
+      'tokenHash',
+      'username',
+      'fullName',
+      'role',
+      'createdAt',
+      'expiresAt',
+      'lastSeenAt',
+      'revokedAt',
+      'userAgent',
+      'ip',
+      'active'
     ]
   };
 }
@@ -217,6 +259,14 @@ function rowToObject(row, headers) {
 }
 
 function getActorInfo_(userContext) {
+  if (userContext && userContext.__actor) {
+    return {
+      actorUsername: userContext.__actor.username || '',
+      actorName: userContext.__actor.fullName || '',
+      actorRole: userContext.__actor.role || ''
+    };
+  }
+
   if (userContext && typeof userContext === 'object') {
     return {
       actorUsername: userContext.username || '',
@@ -276,7 +326,17 @@ function sanitizeAuditValue_(value) {
 
   try {
     return JSON.parse(JSON.stringify(value, function(key, val) {
-      if (String(key).toLowerCase() === 'password') {
+      const sensitiveKeys = {
+        password: true,
+        passwordhash: true,
+        passwordsalt: true,
+        sessiontoken: true,
+        token: true,
+        tokenhash: true,
+        currentpassword: true,
+        newpassword: true
+      };
+      if (sensitiveKeys[String(key).toLowerCase()]) {
         return '[REDACTED]';
       }
       return val;
@@ -300,7 +360,17 @@ function computeChanges_(beforeRecord, afterRecord) {
 
   const changes = {};
   Object.keys(afterRecord).forEach(key => {
-    if (String(key).toLowerCase() === 'password') {
+    const sensitiveKeys = {
+      password: true,
+      passwordhash: true,
+      passwordsalt: true,
+      sessiontoken: true,
+      token: true,
+      tokenhash: true,
+      currentpassword: true,
+      newpassword: true
+    };
+    if (sensitiveKeys[String(key).toLowerCase()]) {
       if (beforeRecord[key] !== afterRecord[key]) {
         changes[key] = { before: '[REDACTED]', after: '[REDACTED]' };
       }
@@ -389,6 +459,624 @@ function buildAuditEvent_(sheetName, action, userContext, entityId, beforeRecord
   });
 }
 
+function isBriefingSheet_(sheetName) {
+  return sheetName === 'GiaoBan_Log' || sheetName === 'DailyBriefing';
+}
+
+function parseJsonArray_(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function normalizeBriefingPayload_(data) {
+  const payload = Object.assign({}, data || {});
+  const tasks = parseJsonArray_(payload.congViecJson || payload.tasks).map((task, index) => {
+    const next = Object.assign({}, task || {});
+    if (!String(next.id || '').trim()) {
+      next.id = 'T' + (index + 1) + '_' + Utilities.getUuid();
+    }
+    return next;
+  });
+
+  if (payload.congViecJson !== undefined || payload.tasks !== undefined) {
+    payload.congViecJson = JSON.stringify(tasks);
+    payload.tasks = tasks;
+  }
+  return payload;
+}
+
+function getBriefingTasks_(briefing) {
+  return parseJsonArray_((briefing || {}).congViecJson || (briefing || {}).tasks);
+}
+
+function getBriefingSourceTaskId_(task, index) {
+  return String((task || {}).id || 'T' + (index + 1));
+}
+
+function isBriefingSourceType_(sourceType) {
+  const value = String(sourceType || '').trim().toLowerCase();
+  return value === 'giao_ban' || value === 'daily_briefing';
+}
+
+function findDataRowById_(sheetName, id) {
+  const sheet = getSheet(sheetName);
+  const { map, headers } = getHeaderIndexMap(sheet);
+  const colIndexID = map.id;
+  if (colIndexID === undefined) throw new Error('Sheet ' + sheetName + ' missing ID column');
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const ids = sheet.getRange(2, colIndexID + 1, lastRow - 1, 1).getValues();
+  const searchId = String(id || '').trim().toLowerCase();
+  for (let i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]).trim().toLowerCase() === searchId) {
+      return { sheet: sheet, headers: headers, rowIndex: i + 2 };
+    }
+  }
+  return null;
+}
+
+function rowFromObject_(headers, data, id) {
+  return headers.map(header => {
+    const key = toCamelCase(header);
+    if (key === 'id') return id || data.id || Utilities.getUuid();
+    if (key === 'createdAt') return data[key] || new Date();
+    let value = data[key];
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string' && value.startsWith('=')) value = "'" + value;
+    return value;
+  });
+}
+
+function internalAddRow_(sheetName, data) {
+  const sheet = getSheet(sheetName);
+  const { headers } = getHeaderIndexMap(sheet);
+  const id = String((data || {}).id || Utilities.getUuid());
+  const row = rowFromObject_(headers, Object.assign({}, data, { id: id }), id);
+  sheet.appendRow(row);
+  return rowToObject(row, headers);
+}
+
+function internalUpdateRow_(sheetName, id, data) {
+  const rowInfo = findDataRowById_(sheetName, id);
+  if (!rowInfo) throw new Error('Record ID "' + id + '" not found in ' + sheetName);
+  const range = rowInfo.sheet.getRange(rowInfo.rowIndex, 1, 1, rowInfo.headers.length);
+  const currentValues = range.getValues()[0];
+  const nextValues = currentValues.slice();
+
+  rowInfo.headers.forEach((header, index) => {
+    const key = toCamelCase(header);
+    if (key !== 'id' && data[key] !== undefined) {
+      let value = data[key];
+      if (value === null || value === undefined) value = '';
+      if (typeof value === 'string' && value.startsWith('=')) value = "'" + value;
+      nextValues[index] = value;
+    }
+  });
+
+  range.setValues([nextValues]);
+  return rowToObject(nextValues, rowInfo.headers);
+}
+
+function internalDeleteRow_(sheetName, id) {
+  const rowInfo = findDataRowById_(sheetName, id);
+  if (!rowInfo) return false;
+  rowInfo.sheet.deleteRow(rowInfo.rowIndex);
+  return true;
+}
+
+function logBriefingSyncAudit_(action, context, briefing, taskRecord, error) {
+  const actor = getActorInfo_(context);
+  const entityId = taskRecord && taskRecord.id ? taskRecord.id : '';
+  logAuditEvent_(Object.assign({}, actor, {
+    module: 'staff_tasks',
+    action: action,
+    entityType: 'StaffTask',
+    entityId: entityId,
+    entityLabel: taskRecord && taskRecord.tieuDe ? taskRecord.tieuDe : '',
+    source: 'gas:syncBriefingTasksToStaffTasks',
+    beforeJson: '',
+    afterJson: safeJsonStringify_({
+      briefingId: briefing && briefing.id ? briefing.id : '',
+      task: taskRecord || null
+    }),
+    changesJson: '',
+    status: error ? 'failed' : 'success',
+    errorMessage: error ? (error.message || String(error)) : ''
+  }));
+}
+
+function buildStaffTaskFromBriefing_(briefingId, briefing, task, index, existing) {
+  const assigneeUsername = String(task.assigneeUsername || task.assignee || '').trim();
+  const assigneeName = String(task.assigneeName || task.assignee || assigneeUsername).trim();
+  const briefingDate = String(briefing.date || '');
+  return Object.assign({}, existing || {}, {
+    userId: assigneeUsername,
+    tieuDe: String(task.taskName || '').trim(),
+    noiDung: String(briefing.content || ''),
+    nguoiGiao: String(briefing.host || ''),
+    ngayGiao: briefingDate || new Date().toISOString().split('T')[0],
+    hanHoanThanh: String(task.deadline || ''),
+    mucDoUuTien: existing && existing.mucDoUuTien ? existing.mucDoUuTien : 'Trung bÃ¬nh',
+    trangThai: existing && existing.trangThai ? existing.trangThai : 'ChÆ°a lÃ m',
+    tienDo: existing && existing.tienDo !== undefined && existing.tienDo !== '' ? existing.tienDo : 0,
+    ketQua: existing && existing.ketQua ? existing.ketQua : '',
+    ghiChu: existing && existing.ghiChu ? existing.ghiChu : '',
+    sourceType: 'daily_briefing',
+    sourceId: briefingId,
+    sourceTaskId: getBriefingSourceTaskId_(task, index),
+    sourceTaskIndex: index,
+    sourceDate: briefingDate,
+    sourceLabel: briefingDate ? 'Giao ban ' + briefingDate : 'Giao ban',
+    assigneeUsername: assigneeUsername,
+    assigneeName: assigneeName,
+    syncStatus: 'active',
+    syncedAt: new Date().toISOString()
+  });
+}
+
+function syncBriefingTasksToStaffTasks_(briefing, context) {
+  const result = { created: 0, updated: 0, paused: 0, deleted: 0, skipped: 0, warnings: [] };
+  const briefingId = String((briefing || {}).id || '').trim();
+  if (!briefingId) return result;
+
+  try {
+    ensureKnownSheetColumns(getSheet('CongViec_NhanVien'), 'CongViec_NhanVien');
+    const staffTasks = apiGet('CongViec_NhanVien');
+    const existingFromBriefing = (Array.isArray(staffTasks) ? staffTasks : []).filter(task =>
+      isBriefingSourceType_(task.sourceType) && String(task.sourceId || '') === briefingId
+    );
+    const tasks = getBriefingTasks_(briefing);
+    const activeSourceIds = {};
+    const activeSourceIndexes = {};
+
+    tasks.forEach((task, index) => {
+      const title = String((task || {}).taskName || '').trim();
+      const assigneeUsername = String((task || {}).assigneeUsername || (task || {}).assignee || '').trim();
+      const sourceTaskId = getBriefingSourceTaskId_(task, index);
+
+      if (!title || !assigneeUsername) {
+        result.skipped += 1;
+        logBriefingSyncAudit_('sync_briefing_task_skip_unassigned', context, briefing, {
+          sourceTaskId: sourceTaskId,
+          sourceTaskIndex: index,
+          tieuDe: title,
+          assigneeUsername: assigneeUsername
+        });
+        return;
+      }
+
+      activeSourceIds[sourceTaskId] = true;
+      activeSourceIndexes[String(index)] = true;
+
+      try {
+        const existing = existingFromBriefing.find(item =>
+          String(item.sourceTaskId || '') === sourceTaskId ||
+          (!item.sourceTaskId && String(item.sourceTaskIndex || '') === String(index))
+        );
+        const payload = buildStaffTaskFromBriefing_(briefingId, briefing, task, index, existing);
+
+        if (existing && existing.id) {
+          const saved = internalUpdateRow_('CongViec_NhanVien', existing.id, payload);
+          result.updated += 1;
+          logBriefingSyncAudit_('sync_briefing_task_update', context, briefing, saved);
+        } else {
+          const saved = internalAddRow_('CongViec_NhanVien', payload);
+          result.created += 1;
+          logBriefingSyncAudit_('sync_briefing_task_create', context, briefing, saved);
+        }
+      } catch (err) {
+        result.warnings.push(err.message || String(err));
+        logBriefingSyncAudit_('sync_briefing_task_error', context, briefing, {
+          sourceTaskId: sourceTaskId,
+          sourceTaskIndex: index,
+          tieuDe: title,
+          assigneeUsername: assigneeUsername
+        }, err);
+      }
+    });
+
+    existingFromBriefing.forEach(existing => {
+      const sourceTaskId = String(existing.sourceTaskId || '');
+      const stillExists = sourceTaskId ? activeSourceIds[sourceTaskId] : activeSourceIndexes[String(existing.sourceTaskIndex || '')];
+      if (stillExists) return;
+
+      try {
+        if (Number(existing.tienDo || 0) > 0) {
+          const note = String(existing.ghiChu || '');
+          const removedNote = 'Da bo khoi giao ban';
+          const saved = internalUpdateRow_('CongViec_NhanVien', existing.id, {
+            trangThai: 'Táº¡m dá»«ng',
+            ghiChu: note.indexOf(removedNote) >= 0 ? note : (note ? note + '\n' + removedNote : removedNote),
+            syncStatus: 'orphaned',
+            syncedAt: new Date().toISOString()
+          });
+          result.paused += 1;
+          logBriefingSyncAudit_('sync_briefing_task_pause', context, briefing, saved);
+        } else {
+          internalDeleteRow_('CongViec_NhanVien', existing.id);
+          result.deleted += 1;
+          logBriefingSyncAudit_('sync_briefing_task_delete', context, briefing, existing);
+        }
+      } catch (err) {
+        result.warnings.push(err.message || String(err));
+        logBriefingSyncAudit_('sync_briefing_task_error', context, briefing, existing, err);
+      }
+    });
+  } catch (err) {
+    result.warnings.push(err.message || String(err));
+    logBriefingSyncAudit_('sync_briefing_task_error', context, briefing, null, err);
+  }
+
+  return result;
+}
+
+function bytesToHex_(bytes) {
+  return bytes.map(byte => {
+    const value = byte < 0 ? byte + 256 : byte;
+    return ('0' + value.toString(16)).slice(-2);
+  }).join('');
+}
+
+function hashSessionToken_(token) {
+  if (!token) return '';
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(token), Utilities.Charset.UTF_8);
+  return bytesToHex_(digest);
+}
+
+function createSessionToken_() {
+  return [
+    Utilities.getUuid(),
+    Utilities.getUuid(),
+    Utilities.getUuid()
+  ].join('.');
+}
+
+function ensureSessionSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Sessions');
+  if (!sheet) {
+    sheet = ss.insertSheet('Sessions');
+    sheet.appendRow(getKnownSheetHeaders().Sessions);
+    sheet.setFrozenRows(1);
+  }
+  ensureKnownSheetColumns(sheet, 'Sessions');
+  return sheet;
+}
+
+function getSessionExpiry_(createdAt) {
+  const expiresAt = new Date(createdAt.getTime());
+  expiresAt.setDate(expiresAt.getDate() + 7);
+  return expiresAt;
+}
+
+function findSessionRowByHash_(tokenHash) {
+  if (!tokenHash) return null;
+  const sheet = ensureSessionSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+
+  const { map, headers } = getHeaderIndexMap(sheet);
+  const tokenHashCol = map['tokenHash'];
+  if (tokenHashCol === undefined) return null;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    if (String(row[tokenHashCol] || '') === tokenHash) {
+      return {
+        sheet,
+        rowIndex: i + 2,
+        headers,
+        map,
+        row,
+        session: rowToObject(row, headers)
+      };
+    }
+  }
+
+  return null;
+}
+
+function logoutUser(sessionToken, sessionContext) {
+  return revokeSession_(sessionToken, sessionContext);
+}
+
+function changeMyPassword(payload, sessionContext) {
+  const actor = validateSession_(sessionContext && sessionContext.sessionToken ? sessionContext.sessionToken : '', sessionContext);
+  const currentPassword = payload && payload.currentPassword;
+  const newPassword = payload && payload.newPassword;
+  const userRow = findUserRowByUsername_(actor.username);
+  if (!userRow) throw new Error('SESSION_EXPIRED: Tài khoản không còn tồn tại.');
+
+  const user = userRow.user;
+  if (!verifyPassword_(currentPassword, user)) {
+    logAuditEvent_({
+      actorUsername: actor.username || '',
+      actorName: actor.fullName || '',
+      actorRole: actor.role || '',
+      module: 'auth',
+      action: 'change_password',
+      entityType: 'User',
+      entityId: actor.username || '',
+      entityLabel: actor.fullName || actor.username || '',
+      source: 'gas:changeMyPassword',
+      beforeJson: '',
+      afterJson: '',
+      changesJson: '',
+      status: 'failed',
+      errorMessage: 'invalid current password'
+    });
+    throw new Error('PASSWORD_INVALID: Mật khẩu hiện tại không đúng.');
+  }
+
+  validateNewPassword_(actor.username, newPassword);
+
+  const patch = buildPasswordFields_(newPassword, false);
+  patch.mustChangePassword = false;
+  patch.passwordResetAt = '';
+  const values = sheetRowWithPatch_(userRow, patch);
+  userRow.sheet.getRange(userRow.rowIndex, 1, 1, userRow.headers.length).setValues([values]);
+
+  logAuditEvent_({
+    actorUsername: actor.username || '',
+    actorName: actor.fullName || '',
+    actorRole: actor.role || '',
+    module: 'auth',
+    action: 'change_password',
+    entityType: 'User',
+    entityId: actor.username || '',
+    entityLabel: actor.fullName || actor.username || '',
+    source: 'gas:changeMyPassword',
+    beforeJson: '',
+    afterJson: '',
+    changesJson: safeJsonStringify_({ passwordChanged: true, mustChangePassword: false }),
+    status: 'success',
+    errorMessage: ''
+  });
+
+  return { success: true };
+}
+
+function createSession_(user, meta) {
+  ensureSessionSheet_();
+  const token = createSessionToken_();
+  const tokenHash = hashSessionToken_(token);
+  const createdAt = new Date();
+  const expiresAt = getSessionExpiry_(createdAt);
+  const payload = {
+    id: Utilities.getUuid(),
+    tokenHash,
+    username: user.username || '',
+    fullName: user.fullName || '',
+    role: user.role || '',
+    createdAt: createdAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    lastSeenAt: createdAt.toISOString(),
+    revokedAt: '',
+    userAgent: meta && meta.userAgent ? meta.userAgent : '',
+    ip: meta && meta.ip ? meta.ip : '',
+    active: true
+  };
+
+  apiAdd('Sessions', payload, { system: true, username: 'system', role: 'TRUONG_KHOA' });
+
+  return {
+    sessionToken: token,
+    expiresAt: payload.expiresAt
+  };
+}
+
+function validateSession_(sessionToken, meta) {
+  if (!sessionToken) {
+    const error = new Error('AUTH_REQUIRED: Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.');
+    error.code = 'AUTH_REQUIRED';
+    throw error;
+  }
+
+  const sessionRow = findSessionRowByHash_(hashSessionToken_(sessionToken));
+  if (!sessionRow) {
+    const error = new Error('SESSION_EXPIRED: Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.');
+    error.code = 'SESSION_EXPIRED';
+    throw error;
+  }
+
+  const session = sessionRow.session;
+  const now = new Date();
+  const expiresAt = session.expiresAt ? new Date(session.expiresAt) : null;
+  const active = session.active === true || session.active === 'TRUE' || session.active === 'true' || session.active === 1 || session.active === '1';
+
+  if (!active || session.revokedAt || !expiresAt || expiresAt.getTime() <= now.getTime()) {
+    const error = new Error('SESSION_EXPIRED: Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.');
+    error.code = 'SESSION_EXPIRED';
+    throw error;
+  }
+
+  const user = getUserByUsername_(session.username);
+  if (!user || !isUserActive_(user)) {
+    const error = new Error('SESSION_EXPIRED: Tài khoản không còn hoạt động. Vui lòng đăng nhập lại.');
+    error.code = 'SESSION_EXPIRED';
+    throw error;
+  }
+
+  touchSessionRow_(sessionRow, meta);
+
+  return {
+    username: user.username || session.username || '',
+    fullName: user.fullName || session.fullName || '',
+    role: normalizeRole_(user.role || session.role),
+    mustChangePassword: toBool(user.mustChangePassword)
+  };
+}
+
+function touchSessionRow_(sessionRow, meta) {
+  try {
+    const { sheet, rowIndex, headers, map } = sessionRow;
+    const values = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (map['lastSeenAt'] !== undefined) values[map['lastSeenAt']] = new Date().toISOString();
+    if (meta && meta.userAgent && map['userAgent'] !== undefined) values[map['userAgent']] = meta.userAgent;
+    if (meta && meta.ip && map['ip'] !== undefined) values[map['ip']] = meta.ip;
+    sheet.getRange(rowIndex, 1, 1, headers.length).setValues([values.slice(0, headers.length)]);
+  } catch (err) {
+    console.warn('Session touch failed:', err && err.message ? err.message : err);
+  }
+}
+
+function revokeSession_(sessionToken, meta) {
+  const sessionRow = findSessionRowByHash_(hashSessionToken_(sessionToken));
+  if (!sessionRow) return { success: true };
+
+  const { sheet, rowIndex, headers, map, session } = sessionRow;
+  const values = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (map['revokedAt'] !== undefined) values[map['revokedAt']] = new Date().toISOString();
+  if (map['active'] !== undefined) values[map['active']] = false;
+  sheet.getRange(rowIndex, 1, 1, headers.length).setValues([values.slice(0, headers.length)]);
+
+  logAuditEvent_(Object.assign({}, {
+    actorUsername: session.username || '',
+    actorName: session.fullName || '',
+    actorRole: session.role || '',
+    module: 'auth',
+    action: 'logout',
+    entityType: 'Session',
+    entityId: session.id || '',
+    entityLabel: session.username || '',
+    source: 'gas:logoutUser',
+    beforeJson: '',
+    afterJson: '',
+    changesJson: '',
+    status: 'success',
+    errorMessage: ''
+  }));
+
+  return { success: true };
+}
+
+function generatePasswordSalt_() {
+  return Utilities.getUuid() + Utilities.getUuid();
+}
+
+function hashPassword_(password, salt) {
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(salt || '') + ':' + String(password || ''),
+    Utilities.Charset.UTF_8
+  );
+  return bytesToHex_(digest);
+}
+
+function verifyPassword_(password, user) {
+  if (!user) return false;
+  if (user.passwordHash && user.passwordSalt) {
+    return hashPassword_(password, user.passwordSalt) === String(user.passwordHash);
+  }
+  return String(user.password || '') === String(password || '');
+}
+
+function buildPasswordFields_(password, mustChangePassword) {
+  const salt = generatePasswordSalt_();
+  return {
+    password: '',
+    passwordHash: hashPassword_(password, salt),
+    passwordSalt: salt,
+    passwordUpdatedAt: new Date().toISOString(),
+    mustChangePassword: mustChangePassword === undefined ? false : mustChangePassword,
+    passwordVersion: 1
+  };
+}
+
+function validateNewPassword_(username, newPassword) {
+  const value = String(newPassword || '');
+  if (!value) throw new Error('PASSWORD_INVALID: Mật khẩu mới không được để trống.');
+  if (value.length < 6) throw new Error('PASSWORD_INVALID: Mật khẩu mới phải có ít nhất 6 ký tự.');
+  if (value === '123456') throw new Error('PASSWORD_INVALID: Không được dùng mật khẩu mặc định 123456.');
+  if (value.toLowerCase() === String(username || '').toLowerCase()) {
+    throw new Error('PASSWORD_INVALID: Mật khẩu không được trùng username.');
+  }
+  if (/^\d+$/.test(value) && value.length < 8) {
+    throw new Error('PASSWORD_INVALID: Không dùng mật khẩu toàn số quá ngắn.');
+  }
+}
+
+function findUserRowByUsername_(username) {
+  const sheet = getSheet('Users');
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+
+  const { map, headers } = getHeaderIndexMap(sheet);
+  const usernameCol = map['username'];
+  if (usernameCol === undefined) return null;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  const search = String(username || '').trim().toLowerCase();
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    if (String(row[usernameCol] || '').trim().toLowerCase() === search) {
+      return {
+        sheet,
+        rowIndex: i + 2,
+        headers,
+        map,
+        row,
+        user: rowToObject(row, headers)
+      };
+    }
+  }
+
+  return null;
+}
+
+function updateUserPasswordFields_(username, password, mustChangePassword, resetAt) {
+  const userRow = findUserRowByUsername_(username);
+  if (!userRow) throw new Error('User not found');
+
+  const fields = buildPasswordFields_(password, mustChangePassword);
+  if (resetAt) fields.passwordResetAt = new Date().toISOString();
+
+  const values = sheetRowWithPatch_(userRow, fields);
+  userRow.sheet.getRange(userRow.rowIndex, 1, 1, userRow.headers.length).setValues([values]);
+  return rowToObject(values, userRow.headers);
+}
+
+function sheetRowWithPatch_(rowInfo, patch) {
+  const values = rowInfo.sheet.getRange(rowInfo.rowIndex, 1, 1, rowInfo.sheet.getLastColumn()).getValues()[0];
+  rowInfo.headers.forEach((header, index) => {
+    const key = toCamelCase(header);
+    if (patch[key] !== undefined) values[index] = patch[key];
+  });
+  return values.slice(0, rowInfo.headers.length);
+}
+
+function migratePlaintextPasswordIfNeeded_(username, password, user) {
+  if (!user || user.passwordHash) return user;
+  if (String(user.password || '') !== String(password || '')) return user;
+
+  const migratedUser = updateUserPasswordFields_(username, password, toBool(user.mustChangePassword), false);
+  logAuditEvent_({
+    actorUsername: username || '',
+    actorName: user.fullName || '',
+    actorRole: user.role || '',
+    module: 'auth',
+    action: 'password_migrated',
+    entityType: 'User',
+    entityId: username || '',
+    entityLabel: user.fullName || username || '',
+    source: 'gas:loginUser',
+    beforeJson: '',
+    afterJson: '',
+    changesJson: safeJsonStringify_({ passwordMigrated: true }),
+    status: 'success',
+    errorMessage: ''
+  });
+  return migratedUser;
+}
+
 function normalizeRole_(role) {
   return String(role || '').trim().toUpperCase();
 }
@@ -402,6 +1090,15 @@ function normalizePermissionAction_(action) {
 }
 
 function getActorFromContext_(context) {
+  if (context && context.__actor) return context.__actor;
+  if (context && context.system) {
+    return {
+      username: context.username || 'system',
+      fullName: context.fullName || 'System',
+      role: normalizeRole_(context.role || 'TRUONG_KHOA')
+    };
+  }
+
   const info = getActorInfo_(context);
   return {
     username: info.actorUsername || '',
@@ -560,8 +1257,25 @@ function logPermissionDenied_(context, permission, entityId, payload, errorMessa
 
 function requirePermission_(context, permission, entityId, payload) {
   if (!permission || !permission.module) return getActorFromContext_(context);
+  if (context && context.system) return getActorFromContext_(context);
 
-  const actor = getActorFromContext_(context);
+  let actor = null;
+
+  try {
+    actor = validateSession_(context && context.sessionToken ? context.sessionToken : '', context);
+    if (context && typeof context === 'object') context.__actor = actor;
+  } catch (err) {
+    logPermissionDenied_(context, permission, entityId, payload, err && err.code ? err.code : 'AUTH_REQUIRED');
+    throw err;
+  }
+
+  if (actor.mustChangePassword) {
+    const error = new Error('PASSWORD_CHANGE_REQUIRED: Vui lòng đổi mật khẩu trước khi tiếp tục.');
+    error.code = 'PASSWORD_CHANGE_REQUIRED';
+    logPermissionDenied_(context, permission, entityId, payload, 'PASSWORD_CHANGE_REQUIRED');
+    throw error;
+  }
+
   let verifiedUser = null;
 
   if (actor.username) {
@@ -605,6 +1319,25 @@ function assertUserMutationRules_(context, action, id, data, beforeRecord) {
   }
 }
 
+function prepareUserMutationData_(action, data) {
+  if (!data || action === 'delete') return data;
+  const prepared = Object.assign({}, data);
+
+  if (prepared.password !== undefined && String(prepared.password || '') !== '') {
+    const passwordFields = buildPasswordFields_(prepared.password, true);
+    if (action === 'update') {
+      passwordFields.passwordResetAt = new Date().toISOString();
+    }
+    Object.assign(prepared, passwordFields);
+  }
+
+  if (action === 'create' && prepared.mustChangePassword === undefined) {
+    prepared.mustChangePassword = true;
+  }
+
+  return prepared;
+}
+
 // --- GENERIC API ---
 
 function apiGet(sheetName) {
@@ -617,7 +1350,14 @@ function apiGet(sheetName) {
   const headers = values[0];
   const dataRows = values.slice(1);
   
-  return dataRows.map(row => rowToObject(row, headers));
+  const rows = dataRows.map(row => rowToObject(row, headers));
+  if (sheetName === 'Users') {
+    return rows.map(user => {
+      const { password, passwordHash, passwordSalt, ...safeUser } = user;
+      return safeUser;
+    });
+  }
+  return rows;
 }
 
 function apiAdd(sheetName, data, userRole) {
@@ -630,16 +1370,19 @@ function apiAdd(sheetName, data, userRole) {
 
   let id = data && data.id ? String(data.id).trim() : '';
   let afterRecord = null;
+  let syncResult = null;
   const permission = mapMutationToPermission_(sheetName, 'create', data);
 
   try {
     requirePermission_(userRole, permission, id, data);
+    if (sheetName === 'Users') data = prepareUserMutationData_('create', data);
     const sheet = getSheet(sheetName);
     const { map, headers } = getHeaderIndexMap(sheet);
     
     // ID Handling: Use provided ID or generate new
     // Trim ID to ensure uniqueness safety
     id = id || Utilities.getUuid();
+    if (isBriefingSheet_(sheetName)) data = normalizeBriefingPayload_(data);
     
     // Duplicate check for Patients (using Manual IDs)
     // We must check existing IDs in the sheet to prevent duplicates
@@ -686,7 +1429,10 @@ function apiAdd(sheetName, data, userRole) {
       null,
       afterRecord
     ));
-    return { success: true, id: id };
+    if (isBriefingSheet_(sheetName)) {
+      syncResult = syncBriefingTasksToStaffTasks_(afterRecord, userRole);
+    }
+    return { success: true, id: id, syncResult: syncResult };
     
   } catch (err) {
     if (!err || err.code !== 'PERMISSION_DENIED') {
@@ -714,10 +1460,13 @@ function apiUpdate(sheetName, id, data, userRole) {
 
   let beforeRecord = null;
   let afterRecord = null;
+  let syncResult = null;
   const permission = mapMutationToPermission_(sheetName, 'update', data);
 
   try {
     requirePermission_(userRole, permission, id, data);
+    if (sheetName === 'Users') data = prepareUserMutationData_('update', data);
+    if (isBriefingSheet_(sheetName)) data = normalizeBriefingPayload_(data);
     // --- SECURITY CHECK ---
     // Prevent STAFF from approving surgery or modifying approved status
     if (sheetName === 'DS_BenhNhan' && getActorRole_(userRole) === 'NHAN_VIEN') {
@@ -782,8 +1531,11 @@ function apiUpdate(sheetName, id, data, userRole) {
       beforeRecord,
       afterRecord
     ));
+    if (isBriefingSheet_(sheetName)) {
+      syncResult = syncBriefingTasksToStaffTasks_(afterRecord, userRole);
+    }
     
-    return { success: true };
+    return { success: true, syncResult: syncResult };
     
   } catch (err) {
     if (!err || err.code !== 'PERMISSION_DENIED') {
@@ -871,18 +1623,75 @@ function apiDelete(sheetName, id, userRole) {
 
 // --- SPECIFIC MODULES ---
 
-function loginUser(username, password) {
-  const users = apiGet('Users');
-  const user = users.find(u => 
-    String(u.username).toLowerCase() === String(username).toLowerCase() && 
-    String(u.password) === String(password)
-  );
-  
-  if (user) {
-    if (!user.active) throw new Error("Tài khoản đã bị khoá.");
-    const { password, ...safeUser } = user;
-    return safeUser;
+function loginUser(username, password, sessionContext) {
+  const userRow = findUserRowByUsername_(username);
+  let user = userRow ? userRow.user : null;
+  const passwordOk = verifyPassword_(password, user);
+  if (passwordOk && user && !user.passwordHash) {
+    user = migratePlaintextPasswordIfNeeded_(username, password, user);
   }
+  
+  if (user && passwordOk) {
+    if (!isUserActive_(user)) {
+      logAuditEvent_({
+        actorUsername: username || '',
+        actorName: '',
+        actorRole: '',
+        module: 'auth',
+        action: 'login_failed',
+        entityType: 'User',
+        entityId: username || '',
+        entityLabel: username || '',
+        source: 'gas:loginUser',
+        beforeJson: '',
+        afterJson: '',
+        changesJson: '',
+        status: 'failed',
+        errorMessage: 'inactive user'
+      });
+      throw new Error('Tai khoan da bi khoa.');
+    }
+    if (!user.active) throw new Error("Tài khoản đã bị khoá.");
+    const { password, passwordHash, passwordSalt, ...safeUser } = user;
+    const session = createSession_(safeUser, sessionContext);
+    logAuditEvent_({
+      actorUsername: safeUser.username || '',
+      actorName: safeUser.fullName || '',
+      actorRole: safeUser.role || '',
+      module: 'auth',
+      action: 'login_success',
+      entityType: 'User',
+      entityId: safeUser.username || '',
+      entityLabel: safeUser.fullName || safeUser.username || '',
+      source: 'gas:loginUser',
+      beforeJson: '',
+      afterJson: '',
+      changesJson: '',
+      status: 'success',
+      errorMessage: ''
+    });
+    return {
+      user: safeUser,
+      sessionToken: session.sessionToken,
+      expiresAt: session.expiresAt
+    };
+  }
+  logAuditEvent_({
+    actorUsername: username || '',
+    actorName: '',
+    actorRole: '',
+    module: 'auth',
+    action: 'login_failed',
+    entityType: 'User',
+    entityId: username || '',
+    entityLabel: username || '',
+    source: 'gas:loginUser',
+    beforeJson: '',
+    afterJson: '',
+    changesJson: '',
+    status: 'failed',
+    errorMessage: 'invalid credentials'
+  });
   return null;
 }
 

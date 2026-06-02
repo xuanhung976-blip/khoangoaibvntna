@@ -5,10 +5,20 @@ declare const process: {
 type RpcRequest = {
   funcName: string;
   args: any[];
+  sessionToken?: string;
 };
 
 function jsonResponse(res: any, status: number, data: any) {
   res.status(status).json(data);
+}
+
+function errorResponse(res: any, status: number, code: string, message: string, detail?: any) {
+  jsonResponse(res, status, {
+    success: false,
+    code,
+    error: message,
+    detail,
+  });
 }
 
 function parseRequestBody(req: any) {
@@ -57,7 +67,7 @@ function normalizeGasResponse(value: any) {
 // Contract: receives { funcName, args } and returns data compatible with dataService.ts.
 export default async function handler(req: any, res: any) {
   if (req?.method !== 'POST') {
-    jsonResponse(res, 405, { success: false, error: 'Method Not Allowed' });
+    errorResponse(res, 405, 'RPC_METHOD_NOT_ALLOWED', 'Method Not Allowed');
     return;
   }
 
@@ -65,10 +75,7 @@ export default async function handler(req: any, res: any) {
 
   if (!gasApiUrl) {
     console.error('[RPC PROXY] Missing GAS_API_URL');
-    jsonResponse(res, 500, {
-      success: false,
-      error: 'Missing GAS_API_URL on Vercel server',
-    });
+    errorResponse(res, 500, 'RPC_CONFIG_ERROR', 'Missing GAS_API_URL on Vercel server');
     return;
   }
 
@@ -78,18 +85,37 @@ export default async function handler(req: any, res: any) {
     payload = parseRequestBody(req);
   } catch (err) {
     console.error('[RPC PROXY] Invalid JSON request body', err);
-    jsonResponse(res, 400, { success: false, error: 'Invalid JSON request body' });
+    errorResponse(res, 400, 'RPC_BAD_REQUEST', 'Invalid JSON request body');
     return;
   }
 
   const funcName = payload?.funcName;
   const args = Array.isArray(payload?.args) ? payload?.args : [];
+  const authHeader =
+    typeof req?.headers?.authorization === 'string'
+      ? req.headers.authorization
+      : '';
+  const sessionToken =
+    payload?.sessionToken ||
+    (authHeader.toLowerCase().startsWith('bearer ')
+      ? authHeader.slice(7).trim()
+      : '');
+  const forwardedFor =
+    typeof req?.headers?.['x-forwarded-for'] === 'string'
+      ? req.headers['x-forwarded-for'].split(',')[0].trim()
+      : '';
+  const ip =
+    forwardedFor ||
+    (typeof req?.headers?.['x-real-ip'] === 'string'
+      ? req.headers['x-real-ip']
+      : '');
+  const userAgent =
+    typeof req?.headers?.['user-agent'] === 'string'
+      ? req.headers['user-agent']
+      : '';
 
   if (!funcName || typeof funcName !== 'string') {
-    jsonResponse(res, 400, {
-      success: false,
-      error: 'Invalid payload: funcName is required',
-    });
+    errorResponse(res, 400, 'RPC_BAD_REQUEST', 'Invalid payload: funcName is required');
     return;
   }
 
@@ -99,7 +125,7 @@ export default async function handler(req: any, res: any) {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ funcName, args }),
+      body: JSON.stringify({ funcName, args, sessionToken, ip, userAgent }),
     });
 
     const text = await gasResponse.text();
@@ -112,11 +138,7 @@ export default async function handler(req: any, res: any) {
         status: gasResponse.status,
         detail,
       });
-      jsonResponse(res, 502, {
-        success: false,
-        error: `Google Apps Script HTTP ${gasResponse.status}`,
-        detail,
-      });
+      errorResponse(res, 502, 'RPC_FETCH_FAILED', `Google Apps Script HTTP ${gasResponse.status}`, detail);
       return;
     }
 
@@ -126,11 +148,7 @@ export default async function handler(req: any, res: any) {
         funcName,
         detail,
       });
-      jsonResponse(res, 502, {
-        success: false,
-        error: 'Google Apps Script returned non-JSON response',
-        detail,
-      });
+      errorResponse(res, 502, 'RPC_BAD_RESPONSE', 'Google Apps Script returned non-JSON response', detail);
       return;
     }
 
@@ -140,9 +158,6 @@ export default async function handler(req: any, res: any) {
       funcName,
       message: err?.message || String(err),
     });
-    jsonResponse(res, 502, {
-      success: false,
-      error: err?.message || 'Failed to reach Google Apps Script',
-    });
+    errorResponse(res, 502, 'RPC_FETCH_FAILED', err?.message || 'Failed to reach Google Apps Script');
   }
 }

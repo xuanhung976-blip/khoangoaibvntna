@@ -86,7 +86,23 @@ type HeaderMap = {
 };
 
 const REQUIRED_HEADERS_BY_SHEET: Record<string, string[]> = {
-  Users: ['ID', 'Username', 'Password', 'FullName', 'Role', 'NhomChuyenMon', 'Active', 'CreatedAt', 'CanDeletePatient'],
+  Users: [
+    'ID',
+    'Username',
+    'Password',
+    'FullName',
+    'Role',
+    'NhomChuyenMon',
+    'Active',
+    'CreatedAt',
+    'CanDeletePatient',
+    'passwordHash',
+    'passwordSalt',
+    'passwordUpdatedAt',
+    'mustChangePassword',
+    'passwordResetAt',
+    'passwordVersion',
+  ],
   Roles_Permission: ['ID', 'Role', 'Module', 'CanView', 'CanAdd', 'CanEdit', 'CanDelete'],
   DS_BenhNhan: [
     'ID', 'Name', 'Dob', 'Gender', 'Room', 'Bed', 'TreatmentType', 'Status', 'Diagnosis',
@@ -101,6 +117,7 @@ const REQUIRED_HEADERS_BY_SHEET: Record<string, string[]> = {
     'ID', 'UserId', 'TieuDe', 'NoiDung', 'NguoiGiao', 'NgayGiao', 'HanHoanThanh',
     'MucDoUuTien', 'TrangThai', 'TienDo', 'KetQua', 'GhiChu', 'sourceType', 'sourceId',
     'sourceTaskId', 'sourceTaskIndex', 'assigneeUsername', 'assigneeName', 'sourceDate',
+    'sourceLabel', 'syncStatus', 'syncedAt',
   ],
   DanhGia_NhanVien: [
     'ID', 'UserId', 'LoaiDanhGia', 'Quy', 'Nam', 'DiemHoanThanhCongViec', 'DiemThaiDo',
@@ -134,6 +151,20 @@ const REQUIRED_HEADERS_BY_SHEET: Record<string, string[]> = {
     'userAgent',
     'status',
     'errorMessage',
+  ],
+  Sessions: [
+    'id',
+    'tokenHash',
+    'username',
+    'fullName',
+    'role',
+    'createdAt',
+    'expiresAt',
+    'lastSeenAt',
+    'revokedAt',
+    'userAgent',
+    'ip',
+    'active',
   ],
 };
 
@@ -263,7 +294,11 @@ export async function getRows(sheetName: string): Promise<any[]> {
   const headers = values[0] as string[];
   const dataRows = values.slice(1);
 
-  return dataRows.map((row) => rowToObject(row as any[], headers));
+  const rows = dataRows.map((row) => rowToObject(row as any[], headers));
+  if (sheetName === 'Users') {
+    return rows.map(({ password, passwordHash, passwordSalt, ...safeUser }) => safeUser);
+  }
+  return rows;
 }
 
 export async function appendRow(

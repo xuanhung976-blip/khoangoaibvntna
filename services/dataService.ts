@@ -8,7 +8,6 @@ import {
     ResearchTopic,
     ScientificMeeting,
     DailyBriefing,
-    BriefingTask,
     NewTechnique,
     CommunicationContent,
     Zone5S,
@@ -18,24 +17,51 @@ import {
     User,
     SystemConfig,
     RolePermission,
-    StaffTask,
     StaffEvaluation,
     Role,
     DashboardStats,
+    LoginResult,
 } from '../types';
 import { callApi } from './apiClient';
+
+const SESSION_TOKEN_KEY = 'app_session_token';
+const SESSION_EXPIRES_KEY = 'app_session_expires_at';
+
+export const getSessionToken = (): string => localStorage.getItem(SESSION_TOKEN_KEY) || '';
+
+export const setSessionToken = (token: string, expiresAt?: string) => {
+    if (token) localStorage.setItem(SESSION_TOKEN_KEY, token);
+    if (expiresAt) localStorage.setItem(SESSION_EXPIRES_KEY, expiresAt);
+};
+
+export const clearSession = () => {
+    localStorage.removeItem(SESSION_TOKEN_KEY);
+    localStorage.removeItem(SESSION_EXPIRES_KEY);
+    localStorage.removeItem('app_user');
+};
+
+export const getCurrentUser = (): User | null => {
+    const userStr = localStorage.getItem('app_user');
+    return userStr ? JSON.parse(userStr) : null;
+};
 
 // Transport abstraction (Phase 2 Vercel migration).
 // Giữ nguyên signature cũ của runGAS để không phải sửa exports bên dưới.
 const runGAS = (funcName: string, ...args: any[]): Promise<any> => {
-    const payload = { funcName, args };
-    return callApi('/api/rpc', payload);
+    const payload = { funcName, args, sessionToken: getSessionToken() };
+    return callApi('/api/rpc', payload).catch((err) => {
+        const message = err?.message || String(err);
+        if (message.includes('AUTH_REQUIRED') || message.includes('SESSION_EXPIRED')) {
+            clearSession();
+            window.dispatchEvent(new Event('app_session_expired'));
+        }
+        throw err;
+    });
 };
 
 const getCurrentActor = (): Pick<User, 'username' | 'fullName' | 'role'> => {
-    const userStr = localStorage.getItem('app_user');
-    if (userStr) {
-        const user = JSON.parse(userStr);
+    const user = getCurrentUser();
+    if (user) {
         return {
             username: user.username || '',
             fullName: user.fullName || '',
@@ -111,101 +137,16 @@ export const deleteScientificMeeting = (id: string) => runGAS('apiDelete', 'Sinh
 // 8. BRIEFINGS
 export const getBriefings = () => runGAS('apiGet', 'GiaoBan_Log');
 
-const getBriefingTaskSourceId = (task: Partial<BriefingTask>, index: number) =>
-    String(task.id || `T${index + 1}`);
-
-const buildBriefingStaffTask = (
-    briefingId: string,
-    briefing: Partial<DailyBriefing>,
-    task: Partial<BriefingTask>,
-    index: number,
-    existing?: Partial<StaffTask>,
-): Partial<StaffTask> => {
-    const assigneeUsername = String(task.assigneeUsername || task.assignee || '');
-    const assigneeName = String(task.assigneeName || task.assignee || assigneeUsername);
-
-    return {
-        ...existing,
-        userId: assigneeUsername,
-        tieuDe: String(task.taskName || ''),
-        noiDung: String(briefing.content || ''),
-        nguoiGiao: String(briefing.host || ''),
-        ngayGiao: String(briefing.date || new Date().toISOString().split('T')[0]),
-        hanHoanThanh: String(task.deadline || ''),
-        mucDoUuTien: existing?.mucDoUuTien || 'Trung bình',
-        trangThai: existing?.trangThai || 'Chưa làm',
-        tienDo: existing?.tienDo ?? 0,
-        ketQua: existing?.ketQua || '',
-        ghiChu: existing?.ghiChu || '',
-        sourceType: 'GIAO_BAN',
-        sourceId: briefingId,
-        sourceTaskId: getBriefingTaskSourceId(task, index),
-        sourceTaskIndex: index,
-        assigneeUsername,
-        assigneeName,
-        sourceDate: String(briefing.date || ''),
-    };
-};
-
-export const syncBriefingTasksToStaffTasks = async (briefingId: string, briefing: Partial<DailyBriefing>) => {
-    if (!briefingId) return;
-
-    const briefingTasks = Array.isArray(briefing.tasks) ? briefing.tasks : [];
-    const staffTasks: StaffTask[] = await runGAS('apiGet', 'CongViec_NhanVien');
-    const existingFromBriefing = (Array.isArray(staffTasks) ? staffTasks : []).filter(
-        task => task.sourceType === 'GIAO_BAN' && task.sourceId === briefingId
-    );
-    const activeSourceTaskIds = new Set<string>();
-    const activeSourceTaskIndexes = new Set<string>();
-
-    for (let index = 0; index < briefingTasks.length; index += 1) {
-        const task = briefingTasks[index];
-        if (!String(task.taskName || '').trim() || !String(task.assigneeUsername || task.assignee || '').trim()) continue;
-
-        const sourceTaskId = getBriefingTaskSourceId(task, index);
-        activeSourceTaskIds.add(sourceTaskId);
-        activeSourceTaskIndexes.add(String(index));
-        const existing = existingFromBriefing.find(item => item.sourceTaskId === sourceTaskId || String(item.sourceTaskIndex) === String(index));
-        const payload = buildBriefingStaffTask(briefingId, briefing, task, index, existing);
-
-        if (existing?.id) {
-            await runGAS('apiUpdate', 'CongViec_NhanVien', existing.id, payload, getCurrentActor());
-        } else {
-            await runGAS('apiAdd', 'CongViec_NhanVien', payload, getCurrentActor());
-        }
-    }
-
-    for (const existing of existingFromBriefing) {
-        const sourceTaskId = String(existing.sourceTaskId || '');
-        const stillExists = sourceTaskId ? activeSourceTaskIds.has(sourceTaskId) : activeSourceTaskIndexes.has(String(existing.sourceTaskIndex || ''));
-        if (stillExists) continue;
-
-        if (Number(existing.tienDo || 0) > 0) {
-            const note = String(existing.ghiChu || '');
-            await runGAS('apiUpdate', 'CongViec_NhanVien', existing.id, {
-                ...existing,
-                trangThai: 'Tạm dừng',
-                ghiChu: note.includes('Đã bỏ khỏi giao ban') ? note : `${note ? `${note}\n` : ''}Đã bỏ khỏi giao ban`,
-            }, getCurrentActor());
-        } else {
-            await runGAS('apiDelete', 'CongViec_NhanVien', existing.id, getCurrentActor());
-        }
-    }
-};
+export const syncBriefingTasksToStaffTasks = async () => ({ success: true, handledBy: 'backend' });
 
 export const addBriefing = async (b: DailyBriefing) => {
     const payload = { ...b, congViecJson: JSON.stringify(b.tasks || []) };
-    const result = await runGAS('apiAdd', 'GiaoBan_Log', payload, getCurrentActor());
-    const briefingId = String(result?.id || payload.id || '');
-    await syncBriefingTasksToStaffTasks(briefingId, { ...payload, id: briefingId });
-    return result;
+    return runGAS('apiAdd', 'GiaoBan_Log', payload, getCurrentActor());
 };
 export const updateBriefing = async (id: string, b: Partial<DailyBriefing>) => {
     const payload = { ...b };
     if (b.tasks) payload['congViecJson'] = JSON.stringify(b.tasks);
-    const result = await runGAS('apiUpdate', 'GiaoBan_Log', id, payload, getCurrentActor());
-    await syncBriefingTasksToStaffTasks(id, { ...payload, id });
-    return result;
+    return runGAS('apiUpdate', 'GiaoBan_Log', id, payload, getCurrentActor());
 };
 
 // 9. TECHNIQUES
@@ -240,7 +181,25 @@ export const saveConfig = (c: SystemConfig) => runGAS('apiUpdate', 'Config', c.k
 export const deleteConfig = (key: string) => runGAS('apiDelete', 'Config', key, getCurrentActor());
 
 // 14. USERS & AUTH
-export const loginUser = (u: string, p: string) => runGAS('loginUser', u, p);
+export const loginUser = async (u: string, p: string): Promise<User | null> => {
+    const result: LoginResult | null = await runGAS('loginUser', u, p);
+    if (!result) return null;
+
+    const user = result.user || result;
+    if (result.sessionToken) {
+        setSessionToken(result.sessionToken, result.expiresAt);
+    }
+    return user;
+};
+export const logoutUser = async () => {
+    try {
+        await runGAS('logoutUser');
+    } finally {
+        clearSession();
+    }
+};
+export const changeMyPassword = (currentPassword: string, newPassword: string) =>
+    runGAS('changeMyPassword', { currentPassword, newPassword });
 export const getUsers = () => runGAS('apiGet', 'Users');
 export const getDoctorsList = () => runGAS('getDoctors');
 export const saveUser = (u: User) => runGAS('apiAdd', 'Users', u, getCurrentActor());

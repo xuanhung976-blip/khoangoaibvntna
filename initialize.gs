@@ -9,7 +9,11 @@ function getDetectedSchemas() {
   return [
     {
       name: 'Users',
-      columns: ['ID', 'Username', 'Password', 'FullName', 'Role', 'NhomChuyenMon', 'Active', 'CreatedAt', 'CanDeletePatient']
+      columns: [
+        'ID', 'Username', 'Password', 'FullName', 'Role', 'NhomChuyenMon', 'Active',
+        'CreatedAt', 'CanDeletePatient', 'passwordHash', 'passwordSalt',
+        'passwordUpdatedAt', 'mustChangePassword', 'passwordResetAt', 'passwordVersion'
+      ]
     },
     {
       name: 'Roles_Permission',
@@ -63,7 +67,7 @@ function getDetectedSchemas() {
         'ID', 'UserId', 'TieuDe', 'NoiDung', 'NguoiGiao', 'NgayGiao', 'HanHoanThanh',
         'MucDoUuTien', 'TrangThai', 'TienDo', 'KetQua', 'GhiChu', 'sourceType',
         'sourceId', 'sourceTaskId', 'sourceTaskIndex', 'assigneeUsername',
-        'assigneeName', 'sourceDate'
+        'assigneeName', 'sourceDate', 'sourceLabel', 'syncStatus', 'syncedAt'
       ]
     },
     {
@@ -112,6 +116,13 @@ function getDetectedSchemas() {
         'id', 'timestamp', 'actorUsername', 'actorName', 'actorRole', 'module',
         'action', 'entityType', 'entityId', 'entityLabel', 'source', 'beforeJson',
         'afterJson', 'changesJson', 'ip', 'userAgent', 'status', 'errorMessage'
+      ]
+    },
+    {
+      name: 'Sessions',
+      columns: [
+        'id', 'tokenHash', 'username', 'fullName', 'role', 'createdAt', 'expiresAt',
+        'lastSeenAt', 'revokedAt', 'userAgent', 'ip', 'active'
       ]
     }
   ];
