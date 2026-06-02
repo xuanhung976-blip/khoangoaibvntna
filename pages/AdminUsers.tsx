@@ -45,6 +45,42 @@ const blankUser = (): UserForm => ({
 const toBool = (value: unknown) =>
   value === true || value === 'TRUE' || value === 'true' || value === '1' || value === 1;
 
+const normalizeUsername = (value: unknown) => String(value || '').trim().toLowerCase();
+const normalizeRole = (value: unknown) => {
+  const role = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+
+  if (role === 'ADMIN' || role === 'TRUONGKHOA') return Role.CHIEF;
+  return role as Role;
+};
+
+const deleteUserErrorMessage = (err: any) => {
+  const code = err?.code || '';
+  const message = err?.message || '';
+
+  if (code === 'CANNOT_DELETE_SELF' || message.includes('CANNOT_DELETE_SELF')) {
+    return 'Không thể xóa tài khoản đang đăng nhập.';
+  }
+  if (code === 'CANNOT_DELETE_LAST_TRUONG_KHOA' || message.includes('CANNOT_DELETE_LAST_TRUONG_KHOA')) {
+    return 'Không thể xóa trưởng khoa cuối cùng.';
+  }
+  if (code === 'PERMISSION_DENIED' || message.includes('PERMISSION_DENIED')) {
+    return 'Bạn không có quyền xóa người dùng.';
+  }
+  if (code === 'AUTH_REQUIRED' || code === 'SESSION_EXPIRED' || message.includes('AUTH_REQUIRED') || message.includes('SESSION_EXPIRED')) {
+    return 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+  }
+  if (message.includes('not found') || message.includes('NOT_FOUND')) {
+    return 'Không tìm thấy người dùng.';
+  }
+
+  return message || 'Lỗi xóa người dùng';
+};
+
 export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUser }) => {
   const [activeTab, setActiveTab] = useState<'accounts' | 'permissions'>('accounts');
   const [users, setUsers] = useState<User[]>([]);
@@ -191,17 +227,18 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUser }) => {
   };
 
   const handleDeleteUser = async (user: User) => {
-    if (user.username.toLowerCase() === currentUser.username.toLowerCase()) {
+    if (normalizeUsername(user.username) === normalizeUsername(currentUser.username)) {
       showToast('Không thể xóa user đang đăng nhập', 'error');
       return;
     }
 
     const remainingChiefs = users.filter(
       (u) =>
-        u.role === Role.CHIEF &&
-        u.username.toLowerCase() !== user.username.toLowerCase(),
+        normalizeRole(u.role) === Role.CHIEF &&
+        normalizeUsername(u.username) !== normalizeUsername(user.username) &&
+        toBool(u.active),
     );
-    if (user.role === Role.CHIEF && remainingChiefs.length === 0) {
+    if (normalizeRole(user.role) === Role.CHIEF && remainingChiefs.length === 0) {
       showToast('Không thể xóa TRUONG_KHOA cuối cùng', 'error');
       return;
     }
@@ -212,8 +249,8 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUser }) => {
       await deleteUser(user.username);
       showToast('Đã xóa người dùng', 'success');
       await loadData();
-    } catch {
-      showToast('Lỗi xóa người dùng', 'error');
+    } catch (err: any) {
+      showToast(deleteUserErrorMessage(err), 'error');
     }
   };
 

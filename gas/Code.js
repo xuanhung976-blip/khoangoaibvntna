@@ -32,6 +32,7 @@ function doPost(e) {
   } catch (err) {
     return jsonOutput({
       success: false,
+      code: err && err.code ? err.code : '',
       error: err && err.message ? err.message : String(err)
     });
   }
@@ -1078,7 +1079,19 @@ function migratePlaintextPasswordIfNeeded_(username, password, user) {
 }
 
 function normalizeRole_(role) {
-  return String(role || '').trim().toUpperCase();
+  const raw = String(role || '').trim();
+  const ascii = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+
+  if (ascii === 'ADMIN') return 'TRUONG_KHOA';
+  if (ascii === 'TRUONG_KHOA' || ascii === 'TRUONGKHOA') return 'TRUONG_KHOA';
+  if (ascii === 'DIEU_DUONG_TRUONG' || ascii === 'DIEUDUONGTRUONG') return 'DIEU_DUONG_TRUONG';
+  if (ascii === 'NHAN_VIEN' || ascii === 'NHANVIEN' || ascii === 'STAFF') return 'NHAN_VIEN';
+
+  return ascii;
 }
 
 function normalizePermissionAction_(action) {
@@ -1112,6 +1125,38 @@ function getUserByUsername_(username) {
   const users = apiGet('Users');
   const search = String(username).trim().toLowerCase();
   return users.find(user => String(user.username || '').trim().toLowerCase() === search) || null;
+}
+
+function findSheetRowByKey_(sheet, map, keyField, value) {
+  const keyCol = map[keyField];
+  const search = String(value || '').trim().toLowerCase();
+  if (keyCol === undefined || !search) return -1;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return -1;
+
+  const values = sheet.getRange(2, keyCol + 1, lastRow - 1, 1).getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim().toLowerCase() === search) {
+      return i + 2;
+    }
+  }
+
+  return -1;
+}
+
+function findMutableRowIndex_(sheetName, sheet, map, id) {
+  if (sheetName === 'Users') {
+    const usernameRow = findSheetRowByKey_(sheet, map, 'username', id);
+    if (usernameRow !== -1) return usernameRow;
+
+    const idRow = findSheetRowByKey_(sheet, map, 'id', id);
+    if (idRow !== -1) return idRow;
+
+    return -1;
+  }
+
+  return findSheetRowByKey_(sheet, map, 'id', id);
 }
 
 function isUserActive_(user) {
@@ -1239,6 +1284,12 @@ function makePermissionDeniedError_() {
   return error;
 }
 
+function makeCodedError_(code, message) {
+  const error = new Error(code + ': ' + message);
+  error.code = code;
+  return error;
+}
+
 function logPermissionDenied_(context, permission, entityId, payload, errorMessage) {
   logAuditEvent_(Object.assign({}, getActorInfo_(context), {
     module: permission.module,
@@ -1298,23 +1349,34 @@ function requirePermission_(context, permission, entityId, payload) {
 
 function assertUserMutationRules_(context, action, id, data, beforeRecord) {
   const actor = getActorFromContext_(context);
+  actor.role = normalizeRole_(actor.role);
+
   if (actor.role !== 'TRUONG_KHOA') {
     throw makePermissionDeniedError_();
   }
 
-  if (data && data.role === 'TRUONG_KHOA' && beforeRecord && beforeRecord.role !== 'TRUONG_KHOA') {
+  const targetUsername = String((beforeRecord && beforeRecord.username) || id || '').trim().toLowerCase();
+  const actorUsername = String(actor.username || '').trim().toLowerCase();
+  const targetRole = normalizeRole_(beforeRecord && beforeRecord.role);
+  const nextRole = normalizeRole_(data && data.role);
+
+  if (action === 'delete' && actorUsername && targetUsername && actorUsername === targetUsername) {
+    throw makeCodedError_('CANNOT_DELETE_SELF', 'Không thể xoá tài khoản đang đăng nhập.');
+  }
+
+  if (data && nextRole === 'TRUONG_KHOA' && beforeRecord && targetRole !== 'TRUONG_KHOA') {
     if (actor.role !== 'TRUONG_KHOA') throw makePermissionDeniedError_();
   }
 
-  if (action === 'delete' && beforeRecord && beforeRecord.role === 'TRUONG_KHOA') {
+  if (action === 'delete' && beforeRecord && targetRole === 'TRUONG_KHOA') {
     const users = apiGet('Users');
     const remainingChiefs = users.filter(user =>
-      String(user.username || '').trim().toLowerCase() !== String(id || '').trim().toLowerCase() &&
+      String(user.username || '').trim().toLowerCase() !== targetUsername &&
       normalizeRole_(user.role) === 'TRUONG_KHOA' &&
       isUserActive_(user)
     );
     if (!remainingChiefs.length) {
-      throw new Error('PERMISSION_DENIED: Không được xoá TRUONG_KHOA cuối cùng.');
+      throw makeCodedError_('CANNOT_DELETE_LAST_TRUONG_KHOA', 'Không được xoá TRUONG_KHOA cuối cùng.');
     }
   }
 }
@@ -1479,24 +1541,13 @@ function apiUpdate(sheetName, id, data, userRole) {
     const { map, headers } = getHeaderIndexMap(sheet);
     const colIndexID = map['id'];
     
-    if (colIndexID === undefined) throw new Error(`Sheet ${sheetName} missing ID column`);
+    if (sheetName !== 'Users' && colIndexID === undefined) throw new Error(`Sheet ${sheetName} missing ID column`);
     
     // Find Row
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) throw new Error(`Record ID ${id} not found (empty sheet)`);
     
-    // Fetch all IDs to find index (1 batch read = fast)
-    const idList = sheet.getRange(2, colIndexID + 1, lastRow - 1, 1).getValues();
-    
-    let rowIndex = -1;
-    const searchId = String(id).trim().toLowerCase();
-    
-    for (let i = 0; i < idList.length; i++) {
-      if (String(idList[i][0]).trim().toLowerCase() === searchId) {
-        rowIndex = i + 2; // +2 offset (header + 0-index)
-        break;
-      }
-    }
+    const rowIndex = findMutableRowIndex_(sheetName, sheet, map, id);
     
     if (rowIndex === -1) throw new Error(`Record ID "${id}" not found in ${sheetName}`);
     
@@ -1570,21 +1621,12 @@ function apiDelete(sheetName, id, userRole) {
     const { map, headers } = getHeaderIndexMap(sheet);
     const colIndexID = map['id'];
     
-    if (colIndexID === undefined) throw new Error("Missing ID column");
+    if (sheetName !== 'Users' && colIndexID === undefined) throw new Error("Missing ID column");
     
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) throw new Error("Record not found");
     
-    const idList = sheet.getRange(2, colIndexID + 1, lastRow - 1, 1).getValues();
-    const searchId = String(id).trim().toLowerCase();
-    
-    let rowIndex = -1;
-    for (let i = 0; i < idList.length; i++) {
-      if (String(idList[i][0]).trim().toLowerCase() === searchId) {
-        rowIndex = i + 2;
-        break;
-      }
-    }
+    const rowIndex = findMutableRowIndex_(sheetName, sheet, map, id);
     
     if (rowIndex === -1) throw new Error(`Record ID "${id}" not found to delete`);
     
