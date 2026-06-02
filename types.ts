@@ -16,6 +16,10 @@ export interface User {
   active: boolean;
   createdAt?: string;
   canDeletePatient?: boolean | string; // Permission flag from DB
+  mustChangePassword?: boolean | string;
+  passwordUpdatedAt?: string;
+  passwordResetAt?: string;
+  passwordVersion?: number | string;
 }
 
 export interface Patient {
@@ -109,6 +113,8 @@ export interface BriefingTask {
     id: string;
     taskName: string;
     assignee: string;
+    assigneeUsername?: string;
+    assigneeName?: string;
     deadline: string;
     progress: number;
 }
@@ -196,6 +202,48 @@ export interface RolePermission {
     canDelete: boolean;
 }
 
+export interface AuditLog {
+    id: string;
+    timestamp: string;
+    actorUsername?: string;
+    actorName?: string;
+    actorRole?: string;
+    module: string;
+    action: string;
+    entityType: string;
+    entityId?: string;
+    entityLabel?: string;
+    source?: string;
+    beforeJson?: string;
+    afterJson?: string;
+    changesJson?: string;
+    ip?: string;
+    userAgent?: string;
+    status: 'success' | 'failed';
+    errorMessage?: string;
+}
+
+export interface UserSession {
+    id: string;
+    tokenHash: string;
+    username: string;
+    fullName?: string;
+    role: string;
+    createdAt: string;
+    expiresAt: string;
+    lastSeenAt?: string;
+    revokedAt?: string;
+    userAgent?: string;
+    ip?: string;
+    active: boolean | string;
+}
+
+export interface LoginResult {
+    user: User;
+    sessionToken: string;
+    expiresAt: string;
+}
+
 export interface StaffTask {
     id: string;
     userId: string;
@@ -209,6 +257,16 @@ export interface StaffTask {
     tienDo: number | string;
     ketQua?: string;
     ghiChu?: string;
+    sourceType?: string;
+    sourceId?: string;
+    sourceTaskId?: string;
+    sourceTaskIndex?: number | string;
+    assigneeUsername?: string;
+    assigneeName?: string;
+    sourceDate?: string;
+    sourceLabel?: string;
+    syncStatus?: string;
+    syncedAt?: string;
 }
 
 export interface StaffEvaluation {

@@ -14,10 +14,29 @@ type RpcPayload = {
   args: any[];
 };
 
+export class ApiClientError extends Error {
+  code?: string;
+  status?: number;
+  detail?: any;
+
+  constructor(message: string, code?: string, status?: number, detail?: any) {
+    super(message);
+    this.name = 'ApiClientError';
+    this.code = code;
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 function getErrorMessage(value: any, fallback: string) {
   if (!value) return fallback;
   if (typeof value === 'string') return value;
   return value.error || value.message || fallback;
+}
+
+function getErrorCode(value: any) {
+  if (!value || typeof value !== 'object') return undefined;
+  return value.code || value.errorCode;
 }
 
 function normalizeResponse<T>(value: any): T {
@@ -28,7 +47,12 @@ function normalizeResponse<T>(value: any): T {
     'success' in value
   ) {
     if (value.success === false) {
-      throw new Error(getErrorMessage(value, 'API request failed'));
+      throw new ApiClientError(
+        getErrorMessage(value, 'API request failed'),
+        getErrorCode(value),
+        undefined,
+        value.detail,
+      );
     }
 
     if ('data' in value) {
@@ -71,14 +95,34 @@ export async function callApi<T = any>(
       parsed = text ? JSON.parse(text) : null;
     } catch {
       const preview = text.slice(0, 200);
-      throw new Error(
-        `API returned non-JSON response (${res.status}). ${preview}`,
+      const isPreviewApiMiss =
+        res.status === 404 &&
+        url === '/api/rpc' &&
+        (preview.includes('<!DOCTYPE html') || preview.includes('<html'));
+      throw new ApiClientError(
+        isPreviewApiMiss
+          ? 'Không tìm thấy API /api/rpc. Khi test local fullstack, hãy chạy bằng vercel dev thay vì npm run preview.'
+          : `API returned non-JSON response (${res.status}). ${preview}`,
+        isPreviewApiMiss ? 'RPC_ROUTE_MISSING' : 'RPC_BAD_RESPONSE',
+        res.status,
+        preview,
       );
     }
 
     if (!res.ok) {
-      throw new Error(
+      if (res.status === 404 && url === '/api/rpc') {
+        throw new ApiClientError(
+          'Không tìm thấy API /api/rpc. Khi test local fullstack, hãy chạy bằng vercel dev thay vì npm run preview.',
+          'RPC_ROUTE_MISSING',
+          res.status,
+          parsed,
+        );
+      }
+      throw new ApiClientError(
         getErrorMessage(parsed, `API request failed with status ${res.status}`),
+        getErrorCode(parsed),
+        res.status,
+        parsed?.detail,
       );
     }
 
@@ -87,9 +131,20 @@ export async function callApi<T = any>(
     console.error('[API ERROR]', {
       endpoint: url,
       funcName: payload?.funcName,
+      code: err instanceof ApiClientError ? err.code : undefined,
+      status: err instanceof ApiClientError ? err.status : undefined,
       message: err instanceof Error ? err.message : String(err),
     });
-    throw err;
+    if (err instanceof ApiClientError) throw err;
+
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === 'Failed to fetch' || message.includes('NetworkError')) {
+      throw new ApiClientError(
+        'Không kết nối được máy chủ. Vui lòng kiểm tra API/Vercel/GAS.',
+        'RPC_NETWORK_ERROR',
+      );
+    }
+    throw new ApiClientError(message || 'API request failed', 'RPC_CLIENT_ERROR');
   }
 }
 

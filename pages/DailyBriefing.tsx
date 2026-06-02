@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { CalendarDays, Search, Plus, Edit2, Loader2, CheckSquare, Clock, User, AlertCircle, FileText, ClipboardList, BedDouble, Stethoscope, AlertTriangle, Eye } from 'lucide-react';
-import { DailyBriefing, BriefingTask, Role, Patient, VipPatient, APP_LOGO_URL } from '../types';
-import { getBriefings, addBriefing, updateBriefing, getPatients, getVipPatients } from '../services/dataService';
+import { DailyBriefing, BriefingTask, Role, Patient, VipPatient, User as AppUser, APP_LOGO_URL } from '../types';
+import { getBriefings, addBriefing, updateBriefing, getPatients, getVipPatients, getUsers } from '../services/dataService';
 import { showToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
 
@@ -19,6 +19,7 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
   const [briefings, setBriefings] = useState<DailyBriefing[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [vipPatients, setVipPatients] = useState<VipPatient[]>([]);
+  const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   
@@ -39,11 +40,17 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
     setLoading(true);
     try {
       // Fetch all required data in parallel
-      const [briefingData, patientData, vipData] = await Promise.all([
+      const [briefingData, patientData, vipData, userData] = await Promise.all([
           getBriefings(),
           getPatients(),
-          getVipPatients()
+          getVipPatients(),
+          getUsers()
       ]);
+
+      const safeUsers = Array.isArray(userData) ? userData.filter((u: AppUser) => u.active !== false) : [];
+      const resolveUser = (value?: string) => safeUsers.find((u: AppUser) =>
+          u.username === value || u.fullName === value
+      );
 
       // Parse tasks from JSON string
       const parsedBriefings = (briefingData || []).map((b: any) => {
@@ -57,7 +64,16 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
           } else if (b.tasks && Array.isArray(b.tasks)) {
               tasks = b.tasks;
           }
-          return { ...b, tasks };
+          const normalizedTasks = tasks.map((task, index) => {
+              const user = resolveUser(task.assigneeUsername || task.assignee);
+              return {
+                  ...task,
+                  id: task.id || `T${index + 1}`,
+                  assigneeUsername: task.assigneeUsername || user?.username || '',
+                  assigneeName: task.assigneeName || user?.fullName || task.assignee || '',
+              };
+          });
+          return { ...b, tasks: normalizedTasks };
       });
 
       // Sort briefings by date desc
@@ -66,6 +82,7 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
       setBriefings(sortedBriefings);
       setPatients(patientData || []);
       setVipPatients(vipData || []);
+      setUsers(safeUsers);
     } catch (e) {
       console.error("Error loading briefing data:", e);
       showToast('Lỗi tải dữ liệu giao ban', 'error');
@@ -78,6 +95,10 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
     e.preventDefault();
     if (!currentItem.date || !currentItem.content) {
         showToast('Vui lòng nhập ngày và nội dung', 'error');
+        return;
+    }
+    if ((currentItem.tasks || []).some(task => !String(task.taskName || '').trim() || !task.assigneeUsername)) {
+        showToast('Moi cong viec phai co ten viec va nguoi lam duoc chon tu Users', 'error');
         return;
     }
     setSubmitting(true);
@@ -117,21 +138,33 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
   };
 
   // --- Task Sub-Logic ---
+  const getUserLabel = (username?: string) => {
+      const user = users.find(u => u.username === username);
+      return user?.fullName || username || '';
+  };
+
   const addTask = () => {
-      if(!newTask.taskName || !newTask.assignee) {
-          showToast('Vui lòng nhập tên việc và người làm', 'error');
+      if(!String(newTask.taskName || '').trim()) {
+          showToast('Vui long nhap ten viec can lam', 'error');
           return;
       }
+      if(!newTask.assigneeUsername) {
+          showToast('Vui long chon nguoi lam', 'error');
+          return;
+      }
+      const assigneeName = getUserLabel(newTask.assigneeUsername);
       const t: BriefingTask = {
           id: 'T' + Date.now(),
-          taskName: newTask.taskName,
-          assignee: newTask.assignee,
+          taskName: String(newTask.taskName).trim(),
+          assignee: assigneeName,
+          assigneeUsername: newTask.assigneeUsername,
+          assigneeName,
           deadline: newTask.deadline || '',
           progress: newTask.progress || 0
       };
       const updatedTasks = [...(currentItem.tasks || []), t];
       setCurrentItem({ ...currentItem, tasks: updatedTasks });
-      setNewTask({ taskName: '', assignee: '', deadline: '', progress: 0 });
+      setNewTask({ taskName: '', assignee: '', assigneeUsername: '', assigneeName: '', deadline: '', progress: 0 });
   };
 
   const removeTask = (taskId: string) => {
@@ -367,7 +400,7 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
                                                      <span className={t.progress >= 100 ? 'line-through text-slate-400' : 'text-slate-700'}>{t.taskName}</span>
                                                 </div>
                                                 <div className="flex items-center gap-3 text-xs text-slate-500">
-                                                    <span>{t.assignee}</span>
+                                                    <span>{t.assigneeName || t.assignee}</span>
                                                     <span className="font-mono">{t.progress}%</span>
                                                 </div>
                                             </div>
@@ -432,7 +465,7 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
                          <div key={t.id} className="flex items-center justify-between bg-slate-50 p-2 rounded text-sm">
                              <div className="flex-1">
                                  <div className="font-medium">{t.taskName}</div>
-                                 <div className="text-xs text-slate-500">{t.assignee} | Deadline: {t.deadline}</div>
+                                 <div className="text-xs text-slate-500">{t.assigneeName || t.assignee} | Deadline: {t.deadline}</div>
                              </div>
                              <div className="flex items-center gap-2">
                                  <input 
@@ -457,12 +490,22 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
                         onChange={e => setNewTask({...newTask, taskName: e.target.value})}
                     />
                     <div className="flex gap-2">
-                        <input 
-                            type="text" placeholder="Người làm"
-                            className="flex-1 px-2 py-1.5 text-sm border rounded"
-                            value={newTask.assignee || ''}
-                            onChange={e => setNewTask({...newTask, assignee: e.target.value})}
-                        />
+                        <select
+                            className="flex-1 px-2 py-1.5 text-sm border rounded bg-white"
+                            value={newTask.assigneeUsername || ''}
+                            onChange={e => {
+                                const assigneeUsername = e.target.value;
+                                const assigneeName = getUserLabel(assigneeUsername);
+                                setNewTask({...newTask, assigneeUsername, assigneeName, assignee: assigneeName});
+                            }}
+                        >
+                            <option value="">Chon nguoi lam</option>
+                            {users.map(user => (
+                                <option key={user.username} value={user.username}>
+                                    {user.fullName || user.username}
+                                </option>
+                            ))}
+                        </select>
                         <input 
                             type="date"
                             className="w-32 px-2 py-1.5 text-sm border rounded"
@@ -568,7 +611,7 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
                                         <div>
                                             <div className="font-medium text-slate-800">{t.taskName}</div>
                                             <div className="text-xs text-slate-500 mt-0.5">
-                                                Người làm: <span className="font-semibold text-slate-700">{t.assignee}</span>
+                                                Người làm: <span className="font-semibold text-slate-700">{t.assigneeName || t.assignee}</span>
                                                 {t.deadline && <span className={isLate ? 'text-red-500 font-bold ml-1' : 'ml-1'}> | Hạn: {new Date(t.deadline).toLocaleDateString('vi-VN')}</span>}
                                             </div>
                                         </div>

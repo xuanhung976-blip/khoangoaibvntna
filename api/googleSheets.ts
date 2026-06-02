@@ -85,16 +85,181 @@ type HeaderMap = {
   map: Record<string, number>;
 };
 
-async function getHeaderIndexMap(sheetName: string): Promise<HeaderMap> {
+const REQUIRED_HEADERS_BY_SHEET: Record<string, string[]> = {
+  Users: [
+    'ID',
+    'Username',
+    'Password',
+    'FullName',
+    'Role',
+    'NhomChuyenMon',
+    'Active',
+    'CreatedAt',
+    'CanDeletePatient',
+    'passwordHash',
+    'passwordSalt',
+    'passwordUpdatedAt',
+    'mustChangePassword',
+    'passwordResetAt',
+    'passwordVersion',
+  ],
+  Roles_Permission: ['ID', 'Role', 'Module', 'CanView', 'CanAdd', 'CanEdit', 'CanDelete'],
+  DS_BenhNhan: [
+    'ID', 'Name', 'Dob', 'Gender', 'Room', 'Bed', 'TreatmentType', 'Status', 'Diagnosis',
+    'TreatingDoctor', 'AdmissionDate', 'Notes', 'SurgeryDate', 'Surgeon', 'SurgeryMethod',
+    'AssistantSurgeon1', 'AssistantSurgeon2', 'AssistantSurgeon3', 'Anesthetist',
+    'AnesthetistAssistant', 'ScrubNurse', 'ApprovalDate', 'ApprovalNote', 'ActualSurgeryDate',
+    'SurgeryClassification', 'InterventionType', 'ActivityType', 'PhoneNumber', 'DischargeDate',
+  ],
+  BN_LuuY: ['ID', 'PatientId', 'Priority', 'Reason', 'Room', 'Bed'],
+  GiaoBan_Log: ['ID', 'Date', 'Host', 'Content', 'CongViecJson', 'Notes'],
+  CongViec_NhanVien: [
+    'ID', 'UserId', 'TieuDe', 'NoiDung', 'NguoiGiao', 'NgayGiao', 'HanHoanThanh',
+    'MucDoUuTien', 'TrangThai', 'TienDo', 'KetQua', 'GhiChu', 'sourceType', 'sourceId',
+    'sourceTaskId', 'sourceTaskIndex', 'assigneeUsername', 'assigneeName', 'sourceDate',
+    'sourceLabel', 'syncStatus', 'syncedAt',
+  ],
+  DanhGia_NhanVien: [
+    'ID', 'UserId', 'LoaiDanhGia', 'Quy', 'Nam', 'DiemHoanThanhCongViec', 'DiemThaiDo',
+    'DiemKyLuat', 'DiemPhoiHop', 'DiemSangKien', 'DiemTong', 'XepLoai', 'NhanXet',
+    'NguoiDanhGia', 'NgayDanhGia',
+  ],
+  May_Moc: ['ID', 'Name', 'Code', 'InCharge', 'PurchaseDate', 'LastMaintenanceDate', 'MaintenanceCycle', 'Condition', 'Notes'],
+  Thuoc_Kho: ['ID', 'Name', 'Content', 'Quantity', 'Unit', 'ExpiryDate', 'Notes'],
+  DeTai_CoSo: ['ID', 'Topic', 'Author', 'StartDate', 'Deadline', 'Progress', 'Notes'],
+  SinhHoat_KH: ['ID', 'Time', 'Topic', 'Presenter', 'Location', 'Notes'],
+  Vung_5S: ['ID', 'Name', 'Type', 'Pic', 'CurrentScore', 'LastCheckDate', 'Notes'],
+  DanhGia_5S: ['ID', 'ZoneId', 'Date', 'Assessor', 'Score', 'Comments'],
+  CaiTien_5S: ['ID', 'ZoneId', 'Content', 'Proposer', 'Status', 'Result'],
+  Phan_Truc_Ngay: ['ID', 'Date', 'Doctor', 'Nurse1', 'Nurse2', 'Note'],
+  AuditLogs: [
+    'id',
+    'timestamp',
+    'actorUsername',
+    'actorName',
+    'actorRole',
+    'module',
+    'action',
+    'entityType',
+    'entityId',
+    'entityLabel',
+    'source',
+    'beforeJson',
+    'afterJson',
+    'changesJson',
+    'ip',
+    'userAgent',
+    'status',
+    'errorMessage',
+  ],
+  Sessions: [
+    'id',
+    'tokenHash',
+    'username',
+    'fullName',
+    'role',
+    'createdAt',
+    'expiresAt',
+    'lastSeenAt',
+    'revokedAt',
+    'userAgent',
+    'ip',
+    'active',
+  ],
+};
+
+function formatSheetName(sheetName: string): string {
+  if (/^[A-Za-z0-9_]+$/.test(sheetName)) return sheetName;
+  return `'${sheetName.replace(/'/g, "''")}'`;
+}
+
+function columnToLetter(columnNumber: number): string {
+  let column = columnNumber;
+  let letter = '';
+
+  while (column > 0) {
+    const modulo = (column - 1) % 26;
+    letter = String.fromCharCode(65 + modulo) + letter;
+    column = Math.floor((column - modulo) / 26);
+  }
+
+  return letter || 'A';
+}
+
+export async function getSheetValues(
+  sheetName: string,
+  rangeSuffix = '',
+): Promise<any[][]> {
   const sheets = getSheetsClient();
-  const range = `${sheetName}!1:1`;
+  const range = rangeSuffix
+    ? `${formatSheetName(sheetName)}!${rangeSuffix}`
+    : formatSheetName(sheetName);
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID!,
     range,
   });
 
-  const headers = (res.data.values?.[0] as string[] | undefined) ?? [];
+  return (res.data.values as any[][] | undefined) ?? [];
+}
+
+export async function writeSheetValues(
+  sheetName: string,
+  rangeSuffix: string,
+  values: any[][],
+): Promise<void> {
+  const sheets = getSheetsClient();
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID!,
+    range: `${formatSheetName(sheetName)}!${rangeSuffix}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: {
+      values,
+    },
+  });
+}
+
+export async function appendMissingHeaders(
+  sheetName: string,
+  existingHeaders: string[],
+  requiredHeaders: string[],
+): Promise<string[]> {
+  const missingHeaders = requiredHeaders.filter(
+    (header) =>
+      !existingHeaders.some(
+        (existing) =>
+          String(existing).trim().toLowerCase() === String(header).trim().toLowerCase(),
+      ),
+  );
+
+  if (!missingHeaders.length) return existingHeaders;
+
+  const nextColumn = existingHeaders.length + 1;
+  const endColumn = existingHeaders.length + missingHeaders.length;
+  await writeSheetValues(
+    sheetName,
+    `${columnToLetter(nextColumn)}1:${columnToLetter(endColumn)}1`,
+    [missingHeaders],
+  );
+
+  return [...existingHeaders, ...missingHeaders];
+}
+
+export async function ensureSheetHeaders(sheetName: string): Promise<string[]> {
+  const values = await getSheetValues(sheetName, '1:1');
+  const headers = ((values[0] as string[] | undefined) ?? []).map(String);
+  const requiredHeaders = REQUIRED_HEADERS_BY_SHEET[sheetName] ?? [];
+
+  if (!headers.length || !requiredHeaders.length) {
+    return headers;
+  }
+
+  return appendMissingHeaders(sheetName, headers, requiredHeaders);
+}
+
+async function getHeaderIndexMap(sheetName: string): Promise<HeaderMap> {
+  const headers = await ensureSheetHeaders(sheetName);
   const map: Record<string, number> = {};
   headers.forEach((h, i) => {
     map[toCamelCase(h)] = i;
@@ -103,7 +268,7 @@ async function getHeaderIndexMap(sheetName: string): Promise<HeaderMap> {
   return { headers, map };
 }
 
-function rowToObject(row: any[], headers: string[]): any {
+export function rowToObject(row: any[], headers: string[]): any {
   const obj: any = {};
   headers.forEach((h, i) => {
     let val = row[i];
@@ -113,21 +278,27 @@ function rowToObject(row: any[], headers: string[]): any {
   return obj;
 }
 
-export async function getRows(sheetName: string): Promise<any[]> {
-  const sheets = getSheetsClient();
-
-  const meta = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID!,
-    range: `${sheetName}!A1:Z`,
+export function objectToRow(data: Record<string, any>, headers: string[]): any[] {
+  return headers.map((h) => {
+    const key = toCamelCase(h);
+    const val = data[key];
+    return val === undefined || val === null ? '' : val;
   });
+}
 
-  const values = meta.data.values ?? [];
+export async function getRows(sheetName: string): Promise<any[]> {
+  await ensureSheetHeaders(sheetName);
+  const values = await getSheetValues(sheetName);
   if (values.length < 2) return [];
 
   const headers = values[0] as string[];
   const dataRows = values.slice(1);
 
-  return dataRows.map((row) => rowToObject(row as any[], headers));
+  const rows = dataRows.map((row) => rowToObject(row as any[], headers));
+  if (sheetName === 'Users') {
+    return rows.map(({ password, passwordHash, passwordSalt, ...safeUser }) => safeUser);
+  }
+  return rows;
 }
 
 export async function appendRow(
@@ -140,16 +311,11 @@ export async function appendRow(
   const id =
     (typeof data.id === 'string' && data.id.trim()) || randomUUID();
 
-  const newRow = headers.map((h) => {
-    const key = toCamelCase(h);
-    if (key === 'id') return id;
-    const val = data[key];
-    return val === undefined || val === null ? '' : val;
-  });
+  const newRow = objectToRow({ ...data, id }, headers);
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID!,
-    range: sheetName,
+    range: formatSheetName(sheetName),
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [newRow],
@@ -171,12 +337,7 @@ async function findRowIndexById(
     throw new Error(`Sheet ${sheetName} missing ID column`);
   }
 
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID!,
-    range: `${sheetName}!A2:Z`,
-  });
-
-  const values = res.data.values ?? [];
+  const values = await getSheetValues(sheetName, '2:');
   const search = String(id).trim().toLowerCase();
   let rowIndex = -1;
 
@@ -201,15 +362,11 @@ export async function updateRowById(
   id: string,
   data: Record<string, any>,
 ): Promise<void> {
-  const sheets = getSheetsClient();
   const { rowIndex, headers } = await findRowIndexById(sheetName, id);
+  const lastHeaderColumn = columnToLetter(headers.length);
 
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID!,
-    range: `${sheetName}!A${rowIndex}:Z${rowIndex}`,
-  });
-
-  const currentRow = (res.data.values?.[0] as any[] | undefined) ?? [];
+  const values = await getSheetValues(sheetName, `A${rowIndex}:${lastHeaderColumn}${rowIndex}`);
+  const currentRow = (values[0] as any[] | undefined) ?? [];
   const newRow = [...currentRow];
 
   headers.forEach((h, colIdx) => {
@@ -221,14 +378,7 @@ export async function updateRowById(
     }
   });
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID!,
-    range: `${sheetName}!A${rowIndex}:Z${rowIndex}`,
-    valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [newRow],
-    },
-  });
+  await writeSheetValues(sheetName, `A${rowIndex}:${lastHeaderColumn}${rowIndex}`, [newRow]);
 }
 
 export async function deleteRowById(
@@ -277,18 +427,8 @@ export async function upsertRowByKeys(
 ): Promise<{ created: boolean }> {
   const sheets = getSheetsClient();
   const { headers } = await getHeaderIndexMap(sheetName);
-
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID!,
-    range: `${sheetName}!A2:Z`,
-  });
-
-  const values = res.data.values ?? [];
-  const targetRow = headers.map((h) => {
-    const key = toCamelCase(h);
-    const val = data[key];
-    return val === undefined || val === null ? '' : val;
-  });
+  const values = await getSheetValues(sheetName, '2:');
+  const targetRow = objectToRow(data, headers);
 
   const foundIdx = values.findIndex((row) => {
     const obj = rowToObject(row as any[], headers);
@@ -302,7 +442,7 @@ export async function upsertRowByKeys(
   if (foundIdx === -1) {
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID!,
-      range: sheetName,
+      range: formatSheetName(sheetName),
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [targetRow],
@@ -312,14 +452,8 @@ export async function upsertRowByKeys(
   }
 
   const rowIndex = foundIdx + 2;
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID!,
-    range: `${sheetName}!A${rowIndex}:Z${rowIndex}`,
-    valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [targetRow],
-    },
-  });
+  const lastHeaderColumn = columnToLetter(headers.length);
+  await writeSheetValues(sheetName, `A${rowIndex}:${lastHeaderColumn}${rowIndex}`, [targetRow]);
 
   return { created: false };
 }

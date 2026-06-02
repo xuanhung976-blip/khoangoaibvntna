@@ -5,6 +5,7 @@ import { User, Role } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
 import { Login } from './components/Login';
+import { ChangePassword } from './components/ChangePassword';
 import { Dashboard } from './pages/Dashboard';
 import { Clinical } from './pages/Clinical';
 import { Inventory } from './pages/Inventory';
@@ -25,6 +26,7 @@ import { AdminUsers } from './pages/AdminUsers';
 import { AdminPermissions } from './pages/AdminPermissions';
 import { StaffPerformance } from './pages/StaffPerformance';
 import { ToastContainer } from './components/Toast';
+import { clearSession, getSessionToken, logoutUser } from './services/dataService';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -74,10 +76,17 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const storedUser = localStorage.getItem('app_user');
-    if (storedUser) {
+    const sessionToken = getSessionToken();
+    if (storedUser && sessionToken) {
       setUser(JSON.parse(storedUser));
+    } else if (storedUser && !sessionToken) {
+      clearSession();
     }
     setLoading(false);
+
+    const handleSessionExpired = () => setUser(null);
+    window.addEventListener('app_session_expired', handleSessionExpired);
+    return () => window.removeEventListener('app_session_expired', handleSessionExpired);
   }, []);
 
   const handleLogin = (u: User) => {
@@ -85,9 +94,18 @@ const App: React.FC = () => {
     localStorage.setItem('app_user', JSON.stringify(u));
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logoutUser();
     setUser(null);
-    localStorage.removeItem('app_user');
+  };
+
+  const handlePasswordChanged = () => {
+    setUser((current) => {
+      if (!current) return current;
+      const updated = { ...current, mustChangePassword: false };
+      localStorage.setItem('app_user', JSON.stringify(updated));
+      return updated;
+    });
   };
 
   if (loading) return <div className="flex h-screen items-center justify-center">Loading...</div>;
@@ -97,6 +115,8 @@ const App: React.FC = () => {
       <ToastContainer />
       {!user ? (
         <Login onLogin={handleLogin} />
+      ) : user.mustChangePassword === true || user.mustChangePassword === 'TRUE' || user.mustChangePassword === 'true' || user.mustChangePassword === '1' ? (
+        <ChangePassword user={user} onChanged={handlePasswordChanged} onLogout={handleLogout} />
       ) : (
         <Layout user={user} onLogout={handleLogout}>
           <Routes>

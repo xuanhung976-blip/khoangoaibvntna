@@ -55,6 +55,8 @@ const toNumber = (value: unknown) => {
 
 const clampPercent = (value: unknown) => Math.max(0, Math.min(100, toNumber(value)));
 const clampScore = (value: unknown) => Math.max(0, Math.min(100, toNumber(value)));
+const isBriefingTask = (task: Partial<StaffTask>) =>
+  ['GIAO_BAN', 'daily_briefing'].includes(String(task.sourceType || ''));
 
 const normalizeStatus = (status: unknown): StaffTask['trangThai'] => {
   const value = String(status || '');
@@ -88,6 +90,16 @@ const normalizeTask = (task: Partial<StaffTask>): StaffTask => ({
   tienDo: clampPercent(task.tienDo),
   ketQua: String(task.ketQua || ''),
   ghiChu: String(task.ghiChu || ''),
+  sourceType: String(task.sourceType || ''),
+  sourceId: String(task.sourceId || ''),
+  sourceTaskId: String(task.sourceTaskId || ''),
+  sourceTaskIndex: task.sourceTaskIndex ?? '',
+  assigneeUsername: String(task.assigneeUsername || ''),
+  assigneeName: String(task.assigneeName || ''),
+  sourceDate: String(task.sourceDate || ''),
+  sourceLabel: String(task.sourceLabel || ''),
+  syncStatus: String(task.syncStatus || ''),
+  syncedAt: String(task.syncedAt || ''),
 });
 
 const calcScore = (item: Partial<StaffEvaluation>) => {
@@ -226,7 +238,7 @@ export const StaffPerformance: React.FC<StaffPerformanceProps> = ({ currentUser 
 
   const selectedUser = users.find((user) => user.username === selectedUserId) || null;
   const selectedTasks = useMemo(
-    () => tasks.filter((task) => task.userId === selectedUserId),
+    () => tasks.filter((task) => task.userId === selectedUserId || task.assigneeUsername === selectedUserId),
     [tasks, selectedUserId],
   );
   const selectedEvaluations = useMemo(
@@ -439,7 +451,7 @@ export const StaffPerformance: React.FC<StaffPerformanceProps> = ({ currentUser 
             ) : users.length === 0 ? (
               <div className="p-6 text-center text-slate-500">Chưa có nhân viên trong sheet Users</div>
             ) : users.map((user) => {
-              const userTasks = tasks.filter((task) => task.userId === user.username);
+              const userTasks = tasks.filter((task) => task.userId === user.username || task.assigneeUsername === user.username);
               const userProgress = userTasks.length
                 ? Math.round(userTasks.reduce((sum, task) => sum + clampPercent(task.tienDo), 0) / userTasks.length)
                 : 0;
@@ -554,6 +566,7 @@ export const StaffPerformance: React.FC<StaffPerformanceProps> = ({ currentUser 
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-semibold text-slate-800">{task.tieuDe || '(Không tiêu đề)'}</h4>
+                          {isBriefingTask(task) && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">Từ giao ban</span>}
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${taskBadge(task.trangThai)}`}>{task.trangThai}</span>
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${priorityBadge(task.mucDoUuTien)}`}>{task.mucDoUuTien}</span>
                         </div>
