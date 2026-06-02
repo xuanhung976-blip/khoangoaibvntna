@@ -1,4 +1,4 @@
-﻿
+
 // ... existing imports ...
 import {
     Patient,
@@ -26,19 +26,23 @@ import {
 import { callApi } from './apiClient';
 
 // Transport abstraction (Phase 2 Vercel migration).
-// Giá»¯ nguyÃªn signature cÅ© cá»§a runGAS Ä‘á»ƒ khÃ´ng pháº£i sá»­a exports bÃªn dÆ°á»›i.
+// Giữ nguyên signature cũ của runGAS để không phải sửa exports bên dưới.
 const runGAS = (funcName: string, ...args: any[]): Promise<any> => {
     const payload = { funcName, args };
     return callApi('/api/rpc', payload);
 };
 
-const getCurrentRole = (): Role => {
+const getCurrentActor = (): Pick<User, 'username' | 'fullName' | 'role'> => {
     const userStr = localStorage.getItem('app_user');
     if (userStr) {
         const user = JSON.parse(userStr);
-        return user.role;
+        return {
+            username: user.username || '',
+            fullName: user.fullName || '',
+            role: user.role || Role.STAFF,
+        };
     }
-    return Role.STAFF;
+    return { username: '', fullName: '', role: Role.STAFF };
 };
 
 // ... existing API calls ...
@@ -46,44 +50,44 @@ const getCurrentRole = (): Role => {
 // 12. SHIFTS
 export const getDailyOnCall = () => runGAS('apiGet', 'Phan_Truc_Ngay');
 export const saveDailyOnCall = (d: DailyOnCall) => {
-    if (d.id) return runGAS('apiUpdate', 'Phan_Truc_Ngay', d.id, d, getCurrentRole());
-    return runGAS('apiAdd', 'Phan_Truc_Ngay', d, getCurrentRole());
+    if (d.id) return runGAS('apiUpdate', 'Phan_Truc_Ngay', d.id, d, getCurrentActor());
+    return runGAS('apiAdd', 'Phan_Truc_Ngay', d, getCurrentActor());
 };
-export const deleteDailyOnCall = (id: string) => runGAS('apiDelete', 'Phan_Truc_Ngay', id, getCurrentRole());
-export const batchSaveDailyOnCall = (shifts: Partial<DailyOnCall>[]) => runGAS('batchSaveDailyOnCall', shifts);
+export const deleteDailyOnCall = (id: string) => runGAS('apiDelete', 'Phan_Truc_Ngay', id, getCurrentActor());
+export const batchSaveDailyOnCall = (shifts: Partial<DailyOnCall>[]) => runGAS('batchSaveDailyOnCall', shifts, getCurrentActor());
 
 export const getPersonnelLists = async () => {
     const users: User[] = await getUsers();
     return {
-        doctors: users.filter(u => u.active && (u.nhomChuyenMon === 'BS' || (!u.nhomChuyenMon && (u.username.startsWith('bs') || u.fullName.toLowerCase().includes('bÃ¡c sÄ©'))))).map(u => u.fullName),
-        nurses: users.filter(u => u.active && (u.nhomChuyenMon === 'DD' || (!u.nhomChuyenMon && (u.username.startsWith('dd') || u.fullName.toLowerCase().includes('Ä‘iá»u dÆ°á»¡ng'))))).map(u => u.fullName)
+        doctors: users.filter(u => u.active && (u.nhomChuyenMon === 'BS' || (!u.nhomChuyenMon && (u.username.startsWith('bs') || u.fullName.toLowerCase().includes('bác sĩ'))))).map(u => u.fullName),
+        nurses: users.filter(u => u.active && (u.nhomChuyenMon === 'DD' || (!u.nhomChuyenMon && (u.username.startsWith('dd') || u.fullName.toLowerCase().includes('điều dưỡng'))))).map(u => u.fullName)
     };
 };
 
 // ... rest of the file ...
 export const getPatients = () => runGAS('apiGet', 'DS_BenhNhan');
-export const addPatient = (p: Patient) => runGAS('apiAdd', 'DS_BenhNhan', p, getCurrentRole());
-export const updatePatient = (id: string, p: Partial<Patient>) => runGAS('apiUpdate', 'DS_BenhNhan', id, p, getCurrentRole());
-export const deletePatient = (id: string) => runGAS('apiDelete', 'DS_BenhNhan', id, getCurrentRole());
+export const addPatient = (p: Patient) => runGAS('apiAdd', 'DS_BenhNhan', p, getCurrentActor());
+export const updatePatient = (id: string, p: Partial<Patient>) => runGAS('apiUpdate', 'DS_BenhNhan', id, p, getCurrentActor());
+export const deletePatient = (id: string) => runGAS('apiDelete', 'DS_BenhNhan', id, getCurrentActor());
 
 // 2. VIP
 export const getVipPatients = () => runGAS('getVipPatientsJoined');
 export const addVipPatient = (idBN: string, priority: string, reason: string) => {
-    return runGAS('addVipPatientSafe', { patientId: idBN, priority, reason }, getCurrentRole());
+    return runGAS('addVipPatientSafe', { patientId: idBN, priority, reason }, getCurrentActor());
 };
-export const removeVipPatient = (id: string) => runGAS('apiDelete', 'BN_LuuY', id, getCurrentRole());
+export const removeVipPatient = (id: string) => runGAS('apiDelete', 'BN_LuuY', id, getCurrentActor());
 
 // 3. MEDICINES
 export const getMedicines = () => runGAS('apiGet', 'Thuoc_Kho');
-export const addMedicine = (m: Medicine) => runGAS('apiAdd', 'Thuoc_Kho', m, getCurrentRole());
-export const updateMedicine = (id: string, m: Partial<Medicine>) => runGAS('apiUpdate', 'Thuoc_Kho', id, m, getCurrentRole());
-export const deleteMedicine = (id: string) => runGAS('apiDelete', 'Thuoc_Kho', id, getCurrentRole());
+export const addMedicine = (m: Medicine) => runGAS('apiAdd', 'Thuoc_Kho', m, getCurrentActor());
+export const updateMedicine = (id: string, m: Partial<Medicine>) => runGAS('apiUpdate', 'Thuoc_Kho', id, m, getCurrentActor());
+export const deleteMedicine = (id: string) => runGAS('apiDelete', 'Thuoc_Kho', id, getCurrentActor());
 
 // 4. EQUIPMENT
 export const getEquipment = () => runGAS('apiGet', 'May_Moc');
-export const addEquipment = (e: MedicalEquipment) => runGAS('apiAdd', 'May_Moc', e, getCurrentRole());
-export const updateEquipment = (id: string, e: Partial<MedicalEquipment>) => runGAS('apiUpdate', 'May_Moc', id, e, getCurrentRole());
-export const deleteEquipment = (id: string) => runGAS('apiDelete', 'May_Moc', id, getCurrentRole());
+export const addEquipment = (e: MedicalEquipment) => runGAS('apiAdd', 'May_Moc', e, getCurrentActor());
+export const updateEquipment = (id: string, e: Partial<MedicalEquipment>) => runGAS('apiUpdate', 'May_Moc', id, e, getCurrentActor());
+export const deleteEquipment = (id: string) => runGAS('apiDelete', 'May_Moc', id, getCurrentActor());
 
 // 5. SURGERY
 export const getSurgeryPendingPatients = async () => {
@@ -94,15 +98,15 @@ export const updateSurgeryStatus = (id: string, update: any) => updatePatient(id
 
 // 6. RESEARCH
 export const getResearchTopics = () => runGAS('apiGet', 'DeTai_CoSo');
-export const addResearchTopic = (r: ResearchTopic) => runGAS('apiAdd', 'DeTai_CoSo', r, getCurrentRole());
-export const updateResearchTopic = (id: string, r: Partial<ResearchTopic>) => runGAS('apiUpdate', 'DeTai_CoSo', id, r, getCurrentRole());
-export const deleteResearchTopic = (id: string) => runGAS('apiDelete', 'DeTai_CoSo', id, getCurrentRole());
+export const addResearchTopic = (r: ResearchTopic) => runGAS('apiAdd', 'DeTai_CoSo', r, getCurrentActor());
+export const updateResearchTopic = (id: string, r: Partial<ResearchTopic>) => runGAS('apiUpdate', 'DeTai_CoSo', id, r, getCurrentActor());
+export const deleteResearchTopic = (id: string) => runGAS('apiDelete', 'DeTai_CoSo', id, getCurrentActor());
 
 // 7. MEETINGS
 export const getScientificMeetings = () => runGAS('apiGet', 'SinhHoat_KH');
-export const addScientificMeeting = (s: ScientificMeeting) => runGAS('apiAdd', 'SinhHoat_KH', s, getCurrentRole());
-export const updateScientificMeeting = (id: string, s: Partial<ScientificMeeting>) => runGAS('apiUpdate', 'SinhHoat_KH', id, s, getCurrentRole());
-export const deleteScientificMeeting = (id: string) => runGAS('apiDelete', 'SinhHoat_KH', id, getCurrentRole());
+export const addScientificMeeting = (s: ScientificMeeting) => runGAS('apiAdd', 'SinhHoat_KH', s, getCurrentActor());
+export const updateScientificMeeting = (id: string, s: Partial<ScientificMeeting>) => runGAS('apiUpdate', 'SinhHoat_KH', id, s, getCurrentActor());
+export const deleteScientificMeeting = (id: string) => runGAS('apiDelete', 'SinhHoat_KH', id, getCurrentActor());
 
 // 8. BRIEFINGS
 export const getBriefings = () => runGAS('apiGet', 'GiaoBan_Log');
@@ -128,8 +132,8 @@ const buildBriefingStaffTask = (
         nguoiGiao: String(briefing.host || ''),
         ngayGiao: String(briefing.date || new Date().toISOString().split('T')[0]),
         hanHoanThanh: String(task.deadline || ''),
-        mucDoUuTien: existing?.mucDoUuTien || 'Trung bÃ¬nh',
-        trangThai: existing?.trangThai || 'ChÆ°a lÃ m',
+        mucDoUuTien: existing?.mucDoUuTien || 'Trung bình',
+        trangThai: existing?.trangThai || 'Chưa làm',
         tienDo: existing?.tienDo ?? 0,
         ketQua: existing?.ketQua || '',
         ghiChu: existing?.ghiChu || '',
@@ -165,9 +169,9 @@ export const syncBriefingTasksToStaffTasks = async (briefingId: string, briefing
         const payload = buildBriefingStaffTask(briefingId, briefing, task, index, existing);
 
         if (existing?.id) {
-            await runGAS('apiUpdate', 'CongViec_NhanVien', existing.id, payload, getCurrentRole());
+            await runGAS('apiUpdate', 'CongViec_NhanVien', existing.id, payload, getCurrentActor());
         } else {
-            await runGAS('apiAdd', 'CongViec_NhanVien', payload, getCurrentRole());
+            await runGAS('apiAdd', 'CongViec_NhanVien', payload, getCurrentActor());
         }
     }
 
@@ -180,18 +184,18 @@ export const syncBriefingTasksToStaffTasks = async (briefingId: string, briefing
             const note = String(existing.ghiChu || '');
             await runGAS('apiUpdate', 'CongViec_NhanVien', existing.id, {
                 ...existing,
-                trangThai: 'Táº¡m dá»«ng',
-                ghiChu: note.includes('ÄÃ£ bá» khá»i giao ban') ? note : `${note ? `${note}\n` : ''}ÄÃ£ bá» khá»i giao ban`,
-            }, getCurrentRole());
+                trangThai: 'Tạm dừng',
+                ghiChu: note.includes('Đã bỏ khỏi giao ban') ? note : `${note ? `${note}\n` : ''}Đã bỏ khỏi giao ban`,
+            }, getCurrentActor());
         } else {
-            await runGAS('apiDelete', 'CongViec_NhanVien', existing.id, getCurrentRole());
+            await runGAS('apiDelete', 'CongViec_NhanVien', existing.id, getCurrentActor());
         }
     }
 };
 
 export const addBriefing = async (b: DailyBriefing) => {
     const payload = { ...b, congViecJson: JSON.stringify(b.tasks || []) };
-    const result = await runGAS('apiAdd', 'GiaoBan_Log', payload, getCurrentRole());
+    const result = await runGAS('apiAdd', 'GiaoBan_Log', payload, getCurrentActor());
     const briefingId = String(result?.id || payload.id || '');
     await syncBriefingTasksToStaffTasks(briefingId, { ...payload, id: briefingId });
     return result;
@@ -199,61 +203,61 @@ export const addBriefing = async (b: DailyBriefing) => {
 export const updateBriefing = async (id: string, b: Partial<DailyBriefing>) => {
     const payload = { ...b };
     if (b.tasks) payload['congViecJson'] = JSON.stringify(b.tasks);
-    const result = await runGAS('apiUpdate', 'GiaoBan_Log', id, payload, getCurrentRole());
+    const result = await runGAS('apiUpdate', 'GiaoBan_Log', id, payload, getCurrentActor());
     await syncBriefingTasksToStaffTasks(id, { ...payload, id });
     return result;
 };
 
 // 9. TECHNIQUES
 export const getTechniques = () => runGAS('apiGet', 'KyThuat_Moi');
-export const addTechnique = (t: NewTechnique) => runGAS('apiAdd', 'KyThuat_Moi', t, getCurrentRole());
-export const updateTechnique = (id: string, t: Partial<NewTechnique>) => runGAS('apiUpdate', 'KyThuat_Moi', id, t, getCurrentRole());
-export const deleteTechnique = (id: string) => runGAS('apiDelete', 'KyThuat_Moi', id, getCurrentRole());
+export const addTechnique = (t: NewTechnique) => runGAS('apiAdd', 'KyThuat_Moi', t, getCurrentActor());
+export const updateTechnique = (id: string, t: Partial<NewTechnique>) => runGAS('apiUpdate', 'KyThuat_Moi', id, t, getCurrentActor());
+export const deleteTechnique = (id: string) => runGAS('apiDelete', 'KyThuat_Moi', id, getCurrentActor());
 
 // 10. COMMUNICATION
 export const getCommunication = () => runGAS('apiGet', 'NoiDung_TT');
-export const addCommunication = (c: CommunicationContent) => runGAS('apiAdd', 'NoiDung_TT', c, getCurrentRole());
-export const updateCommunication = (id: string, c: Partial<CommunicationContent>) => runGAS('apiUpdate', 'NoiDung_TT', id, c, getCurrentRole());
-export const deleteCommunication = (id: string) => runGAS('apiDelete', 'NoiDung_TT', id, getCurrentRole());
+export const addCommunication = (c: CommunicationContent) => runGAS('apiAdd', 'NoiDung_TT', c, getCurrentActor());
+export const updateCommunication = (id: string, c: Partial<CommunicationContent>) => runGAS('apiUpdate', 'NoiDung_TT', id, c, getCurrentActor());
+export const deleteCommunication = (id: string) => runGAS('apiDelete', 'NoiDung_TT', id, getCurrentActor());
 
 // 11. 5S
 export const getZones = () => runGAS('apiGet', 'Vung_5S');
-export const addZone = (z: Zone5S) => runGAS('apiAdd', 'Vung_5S', z, getCurrentRole());
-export const updateZone = (id: string, z: Partial<Zone5S>) => runGAS('apiUpdate', 'Vung_5S', id, z, getCurrentRole());
-export const deleteZone = (id: string) => runGAS('apiDelete', 'Vung_5S', id, getCurrentRole());
+export const addZone = (z: Zone5S) => runGAS('apiAdd', 'Vung_5S', z, getCurrentActor());
+export const updateZone = (id: string, z: Partial<Zone5S>) => runGAS('apiUpdate', 'Vung_5S', id, z, getCurrentActor());
+export const deleteZone = (id: string) => runGAS('apiDelete', 'Vung_5S', id, getCurrentActor());
 
 export const getEvaluations = () => runGAS('apiGet', 'DanhGia_5S');
-export const addEvaluation = (e: Evaluation5S) => runGAS('apiAdd', 'DanhGia_5S', e, getCurrentRole());
+export const addEvaluation = (e: Evaluation5S) => runGAS('apiAdd', 'DanhGia_5S', e, getCurrentActor());
 
 export const getImprovements = () => runGAS('apiGet', 'CaiTien_5S');
-export const addImprovement = (i: Improvement5S) => runGAS('apiAdd', 'CaiTien_5S', i, getCurrentRole());
-export const updateImprovement = (id: string, i: Partial<Improvement5S>) => runGAS('apiUpdate', 'CaiTien_5S', id, i, getCurrentRole());
-export const deleteImprovement = (id: string) => runGAS('apiDelete', 'CaiTien_5S', id, getCurrentRole());
+export const addImprovement = (i: Improvement5S) => runGAS('apiAdd', 'CaiTien_5S', i, getCurrentActor());
+export const updateImprovement = (id: string, i: Partial<Improvement5S>) => runGAS('apiUpdate', 'CaiTien_5S', id, i, getCurrentActor());
+export const deleteImprovement = (id: string) => runGAS('apiDelete', 'CaiTien_5S', id, getCurrentActor());
 
 // 13. CONFIGS
 export const getConfigs = () => runGAS('apiGet', 'Config');
-export const saveConfig = (c: SystemConfig) => runGAS('apiUpdate', 'Config', c.key, c, getCurrentRole()); 
-export const deleteConfig = (key: string) => runGAS('apiDelete', 'Config', key, getCurrentRole());
+export const saveConfig = (c: SystemConfig) => runGAS('apiUpdate', 'Config', c.key, c, getCurrentActor());
+export const deleteConfig = (key: string) => runGAS('apiDelete', 'Config', key, getCurrentActor());
 
 // 14. USERS & AUTH
 export const loginUser = (u: string, p: string) => runGAS('loginUser', u, p);
 export const getUsers = () => runGAS('apiGet', 'Users');
 export const getDoctorsList = () => runGAS('getDoctors');
-export const saveUser = (u: User) => runGAS('apiAdd', 'Users', u, getCurrentRole());
-export const updateUser = (username: string, u: Partial<User> & { password?: string }) => runGAS('apiUpdate', 'Users', username, u, getCurrentRole());
-export const deleteUser = (username: string) => runGAS('apiDelete', 'Users', username, getCurrentRole());
-export const toggleLockUser = (username: string, active: boolean) => runGAS('apiUpdate', 'Users', username, { active }, getCurrentRole());
-export const resetUserPassword = (username: string) => runGAS('apiUpdate', 'Users', username, { password: '123456' }, getCurrentRole());
+export const saveUser = (u: User) => runGAS('apiAdd', 'Users', u, getCurrentActor());
+export const updateUser = (username: string, u: Partial<User> & { password?: string }) => runGAS('apiUpdate', 'Users', username, u, getCurrentActor());
+export const deleteUser = (username: string) => runGAS('apiDelete', 'Users', username, getCurrentActor());
+export const toggleLockUser = (username: string, active: boolean) => runGAS('apiUpdate', 'Users', username, { active }, getCurrentActor());
+export const resetUserPassword = (username: string) => runGAS('apiUpdate', 'Users', username, { password: '123456' }, getCurrentActor());
 
 // 15. PERMISSIONS
 export const getPermissions = () => runGAS('apiGet', 'Roles_Permission');
-export const saveRolePermissions = (perms: RolePermission[]) => runGAS('saveRolePermissions', perms, getCurrentRole());
+export const saveRolePermissions = (perms: RolePermission[]) => runGAS('saveRolePermissions', perms, getCurrentActor());
 export const savePermissions = saveRolePermissions; 
 
 // 16. GENERIC
 export const getGenericData = (module: string) => runGAS('apiGet', module);
-export const saveGenericData = (module: string, item: any) => item.id ? runGAS('apiUpdate', module, item.id, item, getCurrentRole()) : runGAS('apiAdd', module, item, getCurrentRole());
-export const deleteGenericData = (module: string, id: string) => runGAS('apiDelete', module, id, getCurrentRole());
+export const saveGenericData = (module: string, item: any) => item.id ? runGAS('apiUpdate', module, item.id, item, getCurrentActor()) : runGAS('apiAdd', module, item, getCurrentActor());
+export const deleteGenericData = (module: string, id: string) => runGAS('apiDelete', module, id, getCurrentActor());
 
 export const writeActionLog = async (action: string, target: string, detail: any) => {
     try {
@@ -266,7 +270,7 @@ export const writeActionLog = async (action: string, target: string, detail: any
             username: user?.username || '',
             fullName: user?.fullName || '',
             createdAt: new Date().toISOString(),
-        }, getCurrentRole());
+        }, getCurrentActor());
     } catch {
         // Logging is optional; missing Logs sheet or log failures must not block CRUD.
     }

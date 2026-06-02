@@ -53,7 +53,7 @@ function dispatchRpc(funcName, args) {
     case 'getDoctors':
       return getDoctors();
     case 'batchSaveDailyOnCall':
-      return batchSaveDailyOnCall(args[0]);
+      return batchSaveDailyOnCall(args[0], args[1]);
     case 'saveRolePermissions':
       return saveRolePermissions(args[0], args[1]);
     default:
@@ -73,9 +73,32 @@ function getSheet(name) {
   return sheet;
 }
 
-function ensureKnownSheetColumns(sheet, name) {
-  const requiredColumnsBySheet = {
+function getKnownSheetHeaders() {
+  return {
+    Users: ['ID', 'Username', 'Password', 'FullName', 'Role', 'NhomChuyenMon', 'Active', 'CreatedAt', 'CanDeletePatient'],
+    Roles_Permission: ['ID', 'Role', 'Module', 'CanView', 'CanAdd', 'CanEdit', 'CanDelete'],
+    DS_BenhNhan: [
+      'ID', 'Name', 'Dob', 'Gender', 'Room', 'Bed', 'TreatmentType', 'Status', 'Diagnosis',
+      'TreatingDoctor', 'AdmissionDate', 'Notes', 'SurgeryDate', 'Surgeon', 'SurgeryMethod',
+      'AssistantSurgeon1', 'AssistantSurgeon2', 'AssistantSurgeon3', 'Anesthetist',
+      'AnesthetistAssistant', 'ScrubNurse', 'ApprovalDate', 'ApprovalNote', 'ActualSurgeryDate',
+      'SurgeryClassification', 'InterventionType', 'ActivityType', 'PhoneNumber', 'DischargeDate'
+    ],
+    BN_LuuY: ['ID', 'PatientId', 'Priority', 'Reason', 'Room', 'Bed'],
+    GiaoBan_Log: ['ID', 'Date', 'Host', 'Content', 'CongViecJson', 'Notes'],
     CongViec_NhanVien: [
+      'ID',
+      'UserId',
+      'TieuDe',
+      'NoiDung',
+      'NguoiGiao',
+      'NgayGiao',
+      'HanHoanThanh',
+      'MucDoUuTien',
+      'TrangThai',
+      'TienDo',
+      'KetQua',
+      'GhiChu',
       'sourceType',
       'sourceId',
       'sourceTaskId',
@@ -83,18 +106,76 @@ function ensureKnownSheetColumns(sheet, name) {
       'assigneeUsername',
       'assigneeName',
       'sourceDate'
+    ],
+    DanhGia_NhanVien: [
+      'ID',
+      'UserId',
+      'LoaiDanhGia',
+      'Quy',
+      'Nam',
+      'DiemHoanThanhCongViec',
+      'DiemThaiDo',
+      'DiemKyLuat',
+      'DiemPhoiHop',
+      'DiemSangKien',
+      'DiemTong',
+      'XepLoai',
+      'NhanXet',
+      'NguoiDanhGia',
+      'NgayDanhGia'
+    ],
+    May_Moc: ['ID', 'Name', 'Code', 'InCharge', 'PurchaseDate', 'LastMaintenanceDate', 'MaintenanceCycle', 'Condition', 'Notes'],
+    Thuoc_Kho: ['ID', 'Name', 'Content', 'Quantity', 'Unit', 'ExpiryDate', 'Notes'],
+    DeTai_CoSo: ['ID', 'Topic', 'Author', 'StartDate', 'Deadline', 'Progress', 'Notes'],
+    SinhHoat_KH: ['ID', 'Time', 'Topic', 'Presenter', 'Location', 'Notes'],
+    Vung_5S: ['ID', 'Name', 'Type', 'Pic', 'CurrentScore', 'LastCheckDate', 'Notes'],
+    DanhGia_5S: ['ID', 'ZoneId', 'Date', 'Assessor', 'Score', 'Comments'],
+    CaiTien_5S: ['ID', 'ZoneId', 'Content', 'Proposer', 'Status', 'Result'],
+    Phan_Truc_Ngay: ['ID', 'Date', 'Doctor', 'Nurse1', 'Nurse2', 'Note'],
+    Logs: ['ID', 'Timestamp', 'User', 'Action', 'Target', 'Detail'],
+    AuditLogs: [
+      'id',
+      'timestamp',
+      'actorUsername',
+      'actorName',
+      'actorRole',
+      'module',
+      'action',
+      'entityType',
+      'entityId',
+      'entityLabel',
+      'source',
+      'beforeJson',
+      'afterJson',
+      'changesJson',
+      'ip',
+      'userAgent',
+      'status',
+      'errorMessage'
     ]
   };
+}
 
-  const requiredColumns = requiredColumnsBySheet[name];
+function appendMissingHeaders(sheet, headers, requiredColumns) {
+  const existing = {};
+  headers.forEach(header => {
+    existing[String(header).trim().toLowerCase()] = true;
+  });
+
+  const missingColumns = requiredColumns.filter(column => !existing[String(column).trim().toLowerCase()]);
+  if (!missingColumns.length) return headers;
+
+  sheet.getRange(1, headers.length + 1, 1, missingColumns.length).setValues([missingColumns]);
+  return headers.concat(missingColumns);
+}
+
+function ensureKnownSheetColumns(sheet, name) {
+  const requiredColumns = getKnownSheetHeaders()[name];
   if (!requiredColumns || !requiredColumns.length) return;
 
   const lastCol = sheet.getLastColumn();
   const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String) : [];
-  const missingColumns = requiredColumns.filter(column => !headers.includes(column));
-  if (!missingColumns.length) return;
-
-  sheet.getRange(1, headers.length + 1, 1, missingColumns.length).setValues([missingColumns]);
+  appendMissingHeaders(sheet, headers, requiredColumns);
 }
 
 // Convert "MyColumnName" to "myColumnName", strict "ID" -> "id"
@@ -135,6 +216,395 @@ function rowToObject(row, headers) {
   return obj;
 }
 
+function getActorInfo_(userContext) {
+  if (userContext && typeof userContext === 'object') {
+    return {
+      actorUsername: userContext.username || '',
+      actorName: userContext.fullName || userContext.name || '',
+      actorRole: userContext.role || ''
+    };
+  }
+
+  return {
+    actorUsername: '',
+    actorName: '',
+    actorRole: userContext ? String(userContext) : ''
+  };
+}
+
+function getActorRole_(userContext) {
+  return getActorInfo_(userContext).actorRole;
+}
+
+function getAuditSheetInfo_(sheetName) {
+  const map = {
+    Users: { module: 'users', entityType: 'User', labelFields: ['username', 'fullName'] },
+    Roles_Permission: { module: 'permissions', entityType: 'Permission', labelFields: ['role', 'module'] },
+    DS_BenhNhan: { module: 'patients', entityType: 'Patient', labelFields: ['name', 'id'] },
+    BN_LuuY: { module: 'patients', entityType: 'VipPatient', labelFields: ['patientId', 'reason'] },
+    GiaoBan_Log: { module: 'briefing', entityType: 'Briefing', labelFields: ['date', 'host'] },
+    CongViec_NhanVien: { module: 'staff_tasks', entityType: 'StaffTask', labelFields: ['tieuDe', 'assigneeName', 'userId'] },
+    DanhGia_NhanVien: { module: 'staff_evaluations', entityType: 'StaffEvaluation', labelFields: ['userId', 'nam', 'quy'] },
+    Thuoc_Kho: { module: 'inventory', entityType: 'Medicine', labelFields: ['name'] },
+    May_Moc: { module: 'inventory', entityType: 'Equipment', labelFields: ['name', 'code'] },
+    Vung_5S: { module: '5s', entityType: 'Zone5S', labelFields: ['name'] },
+    DanhGia_5S: { module: '5s', entityType: 'Evaluation5S', labelFields: ['zoneId', 'date'] },
+    CaiTien_5S: { module: '5s', entityType: 'Improvement5S', labelFields: ['content'] },
+    DeTai_CoSo: { module: 'research', entityType: 'ResearchTopic', labelFields: ['topic'] },
+    SinhHoat_KH: { module: 'meetings', entityType: 'ScientificMeeting', labelFields: ['topic'] },
+    Phan_Truc_Ngay: { module: 'nursing', entityType: 'DailyOnCall', labelFields: ['date', 'doctor'] },
+    KyThuat_Moi: { module: 'new_techniques', entityType: 'NewTechnique', labelFields: ['name'] },
+    NoiDung_TT: { module: 'communication', entityType: 'CommunicationContent', labelFields: ['title'] },
+    Config: { module: 'config', entityType: 'Config', labelFields: ['key'] }
+  };
+
+  return map[sheetName] || { module: sheetName, entityType: sheetName, labelFields: ['name', 'title', 'id'] };
+}
+
+function getEntityLabel_(record, sheetName) {
+  if (!record) return '';
+  const info = getAuditSheetInfo_(sheetName);
+  const parts = info.labelFields
+    .map(field => record[field])
+    .filter(value => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(value => String(value).trim());
+  return parts.join(' - ');
+}
+
+function sanitizeAuditValue_(value) {
+  if (value === undefined || value === null) return value;
+
+  try {
+    return JSON.parse(JSON.stringify(value, function(key, val) {
+      if (String(key).toLowerCase() === 'password') {
+        return '[REDACTED]';
+      }
+      return val;
+    }));
+  } catch (err) {
+    return String(value);
+  }
+}
+
+function safeJsonStringify_(value) {
+  if (value === undefined || value === null || value === '') return '';
+  try {
+    return JSON.stringify(sanitizeAuditValue_(value));
+  } catch (err) {
+    return String(value);
+  }
+}
+
+function computeChanges_(beforeRecord, afterRecord) {
+  if (!beforeRecord || !afterRecord) return {};
+
+  const changes = {};
+  Object.keys(afterRecord).forEach(key => {
+    if (String(key).toLowerCase() === 'password') {
+      if (beforeRecord[key] !== afterRecord[key]) {
+        changes[key] = { before: '[REDACTED]', after: '[REDACTED]' };
+      }
+      return;
+    }
+
+    const beforeVal = beforeRecord[key] === undefined || beforeRecord[key] === null ? '' : beforeRecord[key];
+    const afterVal = afterRecord[key] === undefined || afterRecord[key] === null ? '' : afterRecord[key];
+    if (String(beforeVal) !== String(afterVal)) {
+      changes[key] = { before: beforeVal, after: afterVal };
+    }
+  });
+
+  return changes;
+}
+
+function classifyAuditAction_(sheetName, baseAction, data, beforeRecord, afterRecord) {
+  if (sheetName === 'Users' && baseAction === 'update') {
+    if (data && data.password !== undefined) return 'reset_password';
+    if (data && data.active !== undefined) {
+      const active = data.active === true || data.active === 'TRUE' || data.active === 'true' || data.active === 1 || data.active === '1';
+      return active ? 'activate' : 'deactivate';
+    }
+  }
+
+  if (sheetName === 'DS_BenhNhan' && baseAction === 'update' && data && data.status === 'DaDuyet') {
+    return 'approve';
+  }
+
+  if (sheetName === 'CongViec_NhanVien' && baseAction === 'update' && data && (data.tienDo !== undefined || data.trangThai !== undefined)) {
+    return 'change_progress_status';
+  }
+
+  return baseAction;
+}
+
+function logAuditEvent_(event) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName('AuditLogs');
+    if (!sheet) {
+      sheet = ss.insertSheet('AuditLogs');
+      sheet.appendRow(getKnownSheetHeaders().AuditLogs);
+      sheet.setFrozenRows(1);
+    }
+
+    ensureKnownSheetColumns(sheet, 'AuditLogs');
+    const { headers } = getHeaderIndexMap(sheet);
+    const payload = Object.assign({
+      id: Utilities.getUuid(),
+      timestamp: new Date().toISOString(),
+      source: 'gas',
+      status: 'success'
+    }, event || {});
+
+    const row = headers.map(header => {
+      const key = toCamelCase(header);
+      const value = payload[key];
+      return value === undefined || value === null ? '' : value;
+    });
+
+    sheet.appendRow(row);
+  } catch (err) {
+    console.warn('Audit log failed:', err && err.message ? err.message : err);
+  }
+}
+
+function buildAuditEvent_(sheetName, action, userContext, entityId, beforeRecord, afterRecord, error) {
+  const actor = getActorInfo_(userContext);
+  const info = getAuditSheetInfo_(sheetName);
+  const labelRecord = afterRecord || beforeRecord || {};
+  const changes = beforeRecord && afterRecord ? computeChanges_(beforeRecord, afterRecord) : {};
+
+  return Object.assign({}, actor, {
+    module: info.module,
+    action: action,
+    entityType: info.entityType,
+    entityId: entityId || labelRecord.id || '',
+    entityLabel: getEntityLabel_(labelRecord, sheetName),
+    source: 'gas',
+    beforeJson: safeJsonStringify_(beforeRecord),
+    afterJson: safeJsonStringify_(afterRecord),
+    changesJson: safeJsonStringify_(changes),
+    status: error ? 'failed' : 'success',
+    errorMessage: error ? (error.message || String(error)) : ''
+  });
+}
+
+function normalizeRole_(role) {
+  return String(role || '').trim().toUpperCase();
+}
+
+function normalizePermissionAction_(action) {
+  const value = String(action || '').toLowerCase();
+  if (value === 'create' || value === 'add' || value === 'assign') return 'add';
+  if (value === 'update' || value === 'edit' || value === 'approve' || value === 'reject' || value === 'reset_password' || value === 'activate' || value === 'deactivate' || value === 'change_progress_status' || value === 'batch_upsert') return 'edit';
+  if (value === 'delete' || value === 'remove') return 'delete';
+  return value || 'view';
+}
+
+function getActorFromContext_(context) {
+  const info = getActorInfo_(context);
+  return {
+    username: info.actorUsername || '',
+    fullName: info.actorName || '',
+    role: normalizeRole_(info.actorRole)
+  };
+}
+
+function getUserByUsername_(username) {
+  if (!username) return null;
+  const users = apiGet('Users');
+  const search = String(username).trim().toLowerCase();
+  return users.find(user => String(user.username || '').trim().toLowerCase() === search) || null;
+}
+
+function isUserActive_(user) {
+  if (!user) return false;
+  return user.active === true || user.active === 'TRUE' || user.active === 'true' || user.active === 1 || user.active === '1';
+}
+
+function getSheetPermissionMap_() {
+  return {
+    Users: { module: 'users', entityType: 'User' },
+    Roles_Permission: { module: 'permissions', entityType: 'Permission' },
+    Permissions: { module: 'permissions', entityType: 'Permission' },
+    DS_BenhNhan: { module: 'clinical', entityType: 'Patient' },
+    Patients: { module: 'clinical', entityType: 'Patient' },
+    BN_LuuY: { module: 'vip', entityType: 'VipPatient' },
+    GiaoBan_Log: { module: 'briefing', entityType: 'DailyBriefing' },
+    DailyBriefing: { module: 'briefing', entityType: 'DailyBriefing' },
+    CongViec_NhanVien: { module: 'staff_performance', entityType: 'StaffTask' },
+    DanhGia_NhanVien: { module: 'staff_performance', entityType: 'StaffEvaluation' },
+    Phan_Truc_Ngay: { module: 'shifts', entityType: 'DailyOnCall' },
+    CongTac_DieuDuong: { module: 'dieu_duong', entityType: 'NursingTask' },
+    Thuoc_Kho: { module: 'inventory', entityType: 'Medicine' },
+    Medicines: { module: 'inventory', entityType: 'Medicine' },
+    May_Moc: { module: 'inventory', entityType: 'Equipment' },
+    Equipment: { module: 'inventory', entityType: 'Equipment' },
+    Vung_5S: { module: '5s', entityType: 'FiveSZone' },
+    DanhGia_5S: { module: '5s', entityType: 'FiveSEvaluation' },
+    CaiTien_5S: { module: '5s', entityType: 'FiveSImprovement' },
+    DeTai_CoSo: { module: 'research', entityType: 'Research' },
+    Research: { module: 'research', entityType: 'Research' },
+    SinhHoat_KH: { module: 'meetings', entityType: 'Meeting' },
+    Meetings: { module: 'meetings', entityType: 'Meeting' },
+    KyThuat_Moi: { module: 'technique', entityType: 'NewTechnique' },
+    NoiDung_TT: { module: 'comms', entityType: 'CommunicationContent' },
+    Config: { module: 'config', entityType: 'Config' }
+  };
+}
+
+function mapMutationToPermission_(sheetName, action, payload) {
+  const base = getSheetPermissionMap_()[sheetName] || { module: sheetName, entityType: sheetName };
+  const permissionAction = normalizePermissionAction_(action);
+  const auditAction = classifyAuditAction_(sheetName, action, payload || {}, null, null);
+
+  if (sheetName === 'DS_BenhNhan' && payload && (payload.status === 'DaDuyet' || payload.approvalDate)) {
+    return { module: 'surgery', action: 'edit', auditAction: 'approve', entityType: base.entityType };
+  }
+
+  return {
+    module: base.module,
+    action: permissionAction,
+    auditAction: auditAction,
+    entityType: base.entityType
+  };
+}
+
+function getPermissionValue_(permission, action) {
+  const normalizedAction = normalizePermissionAction_(action);
+  const candidateKeys = {
+    view: ['canView', 'CanView', 'view', 'allowed', 'Allowed', 'enabled', 'Enable'],
+    add: ['canAdd', 'CanAdd', 'canCreate', 'CanCreate', 'create', 'add', 'allowed', 'Allowed', 'enabled', 'Enable'],
+    edit: ['canEdit', 'CanEdit', 'canUpdate', 'CanUpdate', 'edit', 'update', 'allowed', 'Allowed', 'enabled', 'Enable'],
+    delete: ['canDelete', 'CanDelete', 'delete', 'remove', 'allowed', 'Allowed', 'enabled', 'Enable']
+  }[normalizedAction] || ['allowed', 'Allowed', 'enabled', 'Enable'];
+
+  for (let i = 0; i < candidateKeys.length; i++) {
+    const key = candidateKeys[i];
+    if (permission[key] !== undefined) return toBool(permission[key]);
+  }
+
+  return false;
+}
+
+function findPermissionForRole_(role, moduleName) {
+  let permissions = [];
+  try {
+    permissions = apiGet('Roles_Permission');
+  } catch (err) {
+    return null;
+  }
+  const searchRole = normalizeRole_(role);
+  const searchModule = String(moduleName || '').trim().toLowerCase();
+  return permissions.find(permission =>
+    normalizeRole_(permission.role || permission.Role) === searchRole &&
+    String(permission.module || permission.Module || '').trim().toLowerCase() === searchModule
+  ) || null;
+}
+
+function fallbackCanPerform_(role, moduleName, action) {
+  const normalizedRole = normalizeRole_(role);
+  const normalizedAction = normalizePermissionAction_(action);
+
+  if (normalizedRole === 'TRUONG_KHOA') return true;
+  if (moduleName === 'users' || moduleName === 'permissions' || moduleName === 'config') return false;
+
+  const headNurseModules = ['clinical', 'surgery', 'vip', 'briefing', 'inventory', '5s', 'shifts', 'dieu_duong', 'staff_performance', 'research', 'meetings', 'technique', 'comms'];
+  if (normalizedRole === 'DIEU_DUONG_TRUONG') {
+    return headNurseModules.indexOf(moduleName) !== -1;
+  }
+
+  if (normalizedRole === 'NHAN_VIEN') {
+    if (moduleName === 'surgery' && normalizedAction === 'edit') return false;
+    const staffModules = ['clinical', 'vip', 'briefing', 'inventory', '5s', 'shifts', 'dieu_duong', 'staff_performance', 'research', 'meetings', 'technique', 'comms'];
+    return staffModules.indexOf(moduleName) !== -1;
+  }
+
+  return false;
+}
+
+function canActorPerform_(actor, moduleName, action) {
+  if (!actor || !actor.role) return false;
+  if (actor.role === 'TRUONG_KHOA') return true;
+  if (moduleName === 'users' || moduleName === 'permissions' || moduleName === 'config') return false;
+
+  const permission = findPermissionForRole_(actor.role, moduleName);
+  if (permission) {
+    return getPermissionValue_(permission, action);
+  }
+
+  return fallbackCanPerform_(actor.role, moduleName, action);
+}
+
+function makePermissionDeniedError_() {
+  const error = new Error('PERMISSION_DENIED: Bạn không có quyền thực hiện thao tác này.');
+  error.code = 'PERMISSION_DENIED';
+  return error;
+}
+
+function logPermissionDenied_(context, permission, entityId, payload, errorMessage) {
+  logAuditEvent_(Object.assign({}, getActorInfo_(context), {
+    module: permission.module,
+    action: permission.auditAction || permission.action,
+    entityType: permission.entityType || permission.module,
+    entityId: entityId || (payload && payload.id) || '',
+    entityLabel: payload ? getEntityLabel_(payload, permission.entityType || permission.module) : '',
+    source: 'gas:permission_guard',
+    beforeJson: '',
+    afterJson: safeJsonStringify_(payload || {}),
+    changesJson: '',
+    status: 'failed',
+    errorMessage: errorMessage || 'PERMISSION_DENIED'
+  }));
+}
+
+function requirePermission_(context, permission, entityId, payload) {
+  if (!permission || !permission.module) return getActorFromContext_(context);
+
+  const actor = getActorFromContext_(context);
+  let verifiedUser = null;
+
+  if (actor.username) {
+    verifiedUser = getUserByUsername_(actor.username);
+    if (!verifiedUser || !isUserActive_(verifiedUser)) {
+      logPermissionDenied_(context, permission, entityId, payload, 'PERMISSION_DENIED: inactive or unknown user');
+      throw makePermissionDeniedError_();
+    }
+    actor.role = normalizeRole_(verifiedUser.role || actor.role);
+    actor.fullName = verifiedUser.fullName || actor.fullName;
+  }
+
+  if (!canActorPerform_(actor, permission.module, permission.action)) {
+    logPermissionDenied_(context, permission, entityId, payload, 'PERMISSION_DENIED');
+    throw makePermissionDeniedError_();
+  }
+
+  return actor;
+}
+
+function assertUserMutationRules_(context, action, id, data, beforeRecord) {
+  const actor = getActorFromContext_(context);
+  if (actor.role !== 'TRUONG_KHOA') {
+    throw makePermissionDeniedError_();
+  }
+
+  if (data && data.role === 'TRUONG_KHOA' && beforeRecord && beforeRecord.role !== 'TRUONG_KHOA') {
+    if (actor.role !== 'TRUONG_KHOA') throw makePermissionDeniedError_();
+  }
+
+  if (action === 'delete' && beforeRecord && beforeRecord.role === 'TRUONG_KHOA') {
+    const users = apiGet('Users');
+    const remainingChiefs = users.filter(user =>
+      String(user.username || '').trim().toLowerCase() !== String(id || '').trim().toLowerCase() &&
+      normalizeRole_(user.role) === 'TRUONG_KHOA' &&
+      isUserActive_(user)
+    );
+    if (!remainingChiefs.length) {
+      throw new Error('PERMISSION_DENIED: Không được xoá TRUONG_KHOA cuối cùng.');
+    }
+  }
+}
+
 // --- GENERIC API ---
 
 function apiGet(sheetName) {
@@ -157,14 +627,19 @@ function apiAdd(sheetName, data, userRole) {
   if (!lock.tryLock(10000)) {
      throw new Error("Server is busy. Please try again.");
   }
-  
+
+  let id = data && data.id ? String(data.id).trim() : '';
+  let afterRecord = null;
+  const permission = mapMutationToPermission_(sheetName, 'create', data);
+
   try {
+    requirePermission_(userRole, permission, id, data);
     const sheet = getSheet(sheetName);
     const { map, headers } = getHeaderIndexMap(sheet);
     
     // ID Handling: Use provided ID or generate new
     // Trim ID to ensure uniqueness safety
-    let id = data.id ? String(data.id).trim() : Utilities.getUuid();
+    id = id || Utilities.getUuid();
     
     // Duplicate check for Patients (using Manual IDs)
     // We must check existing IDs in the sheet to prevent duplicates
@@ -202,8 +677,30 @@ function apiAdd(sheetName, data, userRole) {
     });
     
     sheet.appendRow(newRow);
+    afterRecord = rowToObject(newRow, headers);
+    logAuditEvent_(buildAuditEvent_(
+      sheetName,
+      classifyAuditAction_(sheetName, 'create', data, null, afterRecord),
+      userRole,
+      id,
+      null,
+      afterRecord
+    ));
     return { success: true, id: id };
     
+  } catch (err) {
+    if (!err || err.code !== 'PERMISSION_DENIED') {
+      logAuditEvent_(buildAuditEvent_(
+        sheetName,
+        classifyAuditAction_(sheetName, 'create', data, null, afterRecord),
+        userRole,
+        id,
+        null,
+        data,
+        err
+      ));
+    }
+    throw err;
   } finally {
     lock.releaseLock();
   }
@@ -215,10 +712,15 @@ function apiUpdate(sheetName, id, data, userRole) {
      throw new Error("Server is busy. Please try again.");
   }
 
+  let beforeRecord = null;
+  let afterRecord = null;
+  const permission = mapMutationToPermission_(sheetName, 'update', data);
+
   try {
+    requirePermission_(userRole, permission, id, data);
     // --- SECURITY CHECK ---
     // Prevent STAFF from approving surgery or modifying approved status
-    if (sheetName === 'DS_BenhNhan' && userRole === 'NHAN_VIEN') {
+    if (sheetName === 'DS_BenhNhan' && getActorRole_(userRole) === 'NHAN_VIEN') {
        if (data.status === 'DaDuyet' || data.approvalDate) {
           throw new Error("Quyền hạn bị từ chối: Bạn không được phép Duyệt mổ.");
        }
@@ -254,6 +756,10 @@ function apiUpdate(sheetName, id, data, userRole) {
     const range = sheet.getRange(rowIndex, 1, 1, lastCol);
     const currentRowValues = range.getValues()[0];
     const newRowValues = [...currentRowValues];
+    beforeRecord = rowToObject(currentRowValues, headers);
+    if (sheetName === 'Users') {
+      assertUserMutationRules_(userRole, 'update', id, data, beforeRecord);
+    }
     
     headers.forEach((h, colIdx) => {
       const key = toCamelCase(h);
@@ -267,9 +773,31 @@ function apiUpdate(sheetName, id, data, userRole) {
     
     // Write back entire row at once (Fast & Reliable)
     range.setValues([newRowValues]);
+    afterRecord = rowToObject(newRowValues, headers);
+    logAuditEvent_(buildAuditEvent_(
+      sheetName,
+      classifyAuditAction_(sheetName, 'update', data, beforeRecord, afterRecord),
+      userRole,
+      id,
+      beforeRecord,
+      afterRecord
+    ));
     
     return { success: true };
     
+  } catch (err) {
+    if (!err || err.code !== 'PERMISSION_DENIED') {
+      logAuditEvent_(buildAuditEvent_(
+        sheetName,
+        classifyAuditAction_(sheetName, 'update', data, beforeRecord, afterRecord),
+        userRole,
+        id,
+        beforeRecord,
+        data,
+        err
+      ));
+    }
+    throw err;
   } finally {
     lock.releaseLock();
   }
@@ -281,9 +809,13 @@ function apiDelete(sheetName, id, userRole) {
      throw new Error("Server is busy. Please try again.");
   }
 
+  let beforeRecord = null;
+  const permission = mapMutationToPermission_(sheetName, 'delete', null);
+
   try {
+    requirePermission_(userRole, permission, id, null);
     const sheet = getSheet(sheetName);
-    const { map } = getHeaderIndexMap(sheet);
+    const { map, headers } = getHeaderIndexMap(sheet);
     const colIndexID = map['id'];
     
     if (colIndexID === undefined) throw new Error("Missing ID column");
@@ -304,9 +836,34 @@ function apiDelete(sheetName, id, userRole) {
     
     if (rowIndex === -1) throw new Error(`Record ID "${id}" not found to delete`);
     
+    beforeRecord = rowToObject(sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0], headers);
+    if (sheetName === 'Users') {
+      assertUserMutationRules_(userRole, 'delete', id, null, beforeRecord);
+    }
     sheet.deleteRow(rowIndex);
+    logAuditEvent_(buildAuditEvent_(
+      sheetName,
+      'delete',
+      userRole,
+      id,
+      beforeRecord,
+      null
+    ));
     return { success: true };
     
+  } catch (err) {
+    if (!err || err.code !== 'PERMISSION_DENIED') {
+      logAuditEvent_(buildAuditEvent_(
+        sheetName,
+        'delete',
+        userRole,
+        id,
+        beforeRecord,
+        null,
+        err
+      ));
+    }
+    throw err;
   } finally {
     lock.releaseLock();
   }
@@ -330,6 +887,8 @@ function loginUser(username, password) {
 }
 
 function addVipPatientSafe(data, userRole) {
+  requirePermission_(userRole, { module: 'vip', action: 'add', auditAction: 'create', entityType: 'VipPatient' }, data && data.patientId, data);
+
   // 1. Verify Patient Status in DS_BenhNhan
   const pSheet = getSheet('DS_BenhNhan');
   const { map } = getHeaderIndexMap(pSheet);
@@ -604,7 +1163,9 @@ function getDashboardOverview() {
   };
 }
 
-function batchSaveDailyOnCall(shifts) {
+function batchSaveDailyOnCall(shifts, userContext) {
+  requirePermission_(userContext, { module: 'shifts', action: 'edit', auditAction: 'batch_upsert', entityType: 'DailyOnCall' }, '', shifts);
+
   const sheet = getSheet('Phan_Truc_Ngay');
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Busy");
@@ -664,8 +1225,37 @@ function batchSaveDailyOnCall(shifts) {
     if (newRows.length > 0) {
       sheet.getRange(lastRow + 1, 1, newRows.length, lastCol).setValues(newRows);
     }
+
+    logAuditEvent_(Object.assign({}, getActorInfo_(userContext), {
+      module: 'nursing',
+      action: 'batch_upsert',
+      entityType: 'DailyOnCall',
+      entityId: '',
+      entityLabel: shifts && shifts.length ? `${shifts.length} shifts` : '',
+      source: 'gas:batchSaveDailyOnCall',
+      beforeJson: '',
+      afterJson: safeJsonStringify_(shifts || []),
+      changesJson: '',
+      status: 'success',
+      errorMessage: ''
+    }));
     
     return { success: true };
+  } catch (err) {
+    logAuditEvent_(Object.assign({}, getActorInfo_(userContext), {
+      module: 'nursing',
+      action: 'batch_upsert',
+      entityType: 'DailyOnCall',
+      entityId: '',
+      entityLabel: shifts && shifts.length ? `${shifts.length} shifts` : '',
+      source: 'gas:batchSaveDailyOnCall',
+      beforeJson: '',
+      afterJson: safeJsonStringify_(shifts || []),
+      changesJson: '',
+      status: 'failed',
+      errorMessage: err && err.message ? err.message : String(err)
+    }));
+    throw err;
   } finally {
     lock.releaseLock();
   }
@@ -676,6 +1266,8 @@ function toBool(value) {
 }
 
 function saveRolePermissions(permissions, userRole) {
+  requirePermission_(userRole, { module: 'permissions', action: 'edit', auditAction: 'update', entityType: 'Permission' }, '', permissions);
+
   if (!Array.isArray(permissions)) {
     throw new Error('saveRolePermissions requires permissions array');
   }

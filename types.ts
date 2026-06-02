@@ -198,6 +198,27 @@ export interface RolePermission {
     canDelete: boolean;
 }
 
+export interface AuditLog {
+    id: string;
+    timestamp: string;
+    actorUsername?: string;
+    actorName?: string;
+    actorRole?: string;
+    module: string;
+    action: string;
+    entityType: string;
+    entityId?: string;
+    entityLabel?: string;
+    source?: string;
+    beforeJson?: string;
+    afterJson?: string;
+    changesJson?: string;
+    ip?: string;
+    userAgent?: string;
+    status: 'success' | 'failed';
+    errorMessage?: string;
+}
+
 export interface StaffTask {
     id: string;
     userId: string;

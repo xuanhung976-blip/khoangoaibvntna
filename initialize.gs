@@ -13,7 +13,7 @@ function getDetectedSchemas() {
     },
     {
       name: 'Roles_Permission',
-      columns: ['Role', 'Module', 'CanView', 'CanAdd', 'CanEdit', 'CanDelete']
+      columns: ['ID', 'Role', 'Module', 'CanView', 'CanAdd', 'CanEdit', 'CanDelete']
     },
     {
       name: 'Config',
@@ -58,6 +58,23 @@ function getDetectedSchemas() {
       columns: ['ID', 'Date', 'Host', 'Content', 'CongViecJson', 'Notes']
     },
     {
+      name: 'CongViec_NhanVien',
+      columns: [
+        'ID', 'UserId', 'TieuDe', 'NoiDung', 'NguoiGiao', 'NgayGiao', 'HanHoanThanh',
+        'MucDoUuTien', 'TrangThai', 'TienDo', 'KetQua', 'GhiChu', 'sourceType',
+        'sourceId', 'sourceTaskId', 'sourceTaskIndex', 'assigneeUsername',
+        'assigneeName', 'sourceDate'
+      ]
+    },
+    {
+      name: 'DanhGia_NhanVien',
+      columns: [
+        'ID', 'UserId', 'LoaiDanhGia', 'Quy', 'Nam', 'DiemHoanThanhCongViec',
+        'DiemThaiDo', 'DiemKyLuat', 'DiemPhoiHop', 'DiemSangKien', 'DiemTong',
+        'XepLoai', 'NhanXet', 'NguoiDanhGia', 'NgayDanhGia'
+      ]
+    },
+    {
       name: 'KyThuat_Moi',
       columns: ['ID', 'Name', 'Leader', 'Description', 'StartDate', 'Progress', 'Count', 'Status', 'Results']
     },
@@ -84,6 +101,18 @@ function getDetectedSchemas() {
     {
       name: 'CongTac_DieuDuong',
       columns: ['ID', 'Date', 'Shift', 'Task', 'Status']
+    },
+    {
+      name: 'Logs',
+      columns: ['ID', 'Timestamp', 'User', 'Action', 'Target', 'Detail']
+    },
+    {
+      name: 'AuditLogs',
+      columns: [
+        'id', 'timestamp', 'actorUsername', 'actorName', 'actorRole', 'module',
+        'action', 'entityType', 'entityId', 'entityLabel', 'source', 'beforeJson',
+        'afterJson', 'changesJson', 'ip', 'userAgent', 'status', 'errorMessage'
+      ]
     }
   ];
 }
