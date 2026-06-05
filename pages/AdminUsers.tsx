@@ -6,7 +6,6 @@ import {
   Loader2,
   Lock,
   Search,
-  ShieldCheck,
   Stethoscope,
   Trash2,
   Unlock,
@@ -24,7 +23,6 @@ import {
 } from '../services/dataService';
 import { showToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
-import { AdminPermissions } from './AdminPermissions';
 
 type AdminUsersProps = {
   currentUser: User;
@@ -82,7 +80,6 @@ const deleteUserErrorMessage = (err: any) => {
 };
 
 export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUser }) => {
-  const [activeTab, setActiveTab] = useState<'accounts' | 'permissions'>('accounts');
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -281,34 +278,11 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUser }) => {
           </h2>
           <p className="text-sm text-slate-500">Tài khoản nhân sự và phân quyền truy cập</p>
         </div>
-        {activeTab === 'accounts' && (
-          <button onClick={openAddModal} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 shadow-sm">
+        <button onClick={openAddModal} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 shadow-sm">
             <UserPlus className="h-4 w-4" /> Thêm user
           </button>
-        )}
       </div>
-
-      <div className="border-b border-slate-200">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setActiveTab('accounts')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === 'accounts' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-          >
-            Tài khoản
-          </button>
-          <button
-            onClick={() => setActiveTab('permissions')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 ${activeTab === 'permissions' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-          >
-            <ShieldCheck className="h-4 w-4" /> Phân quyền
-          </button>
-        </div>
-      </div>
-
-      {activeTab === 'permissions' ? (
-        <AdminPermissions />
-      ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-200 bg-slate-50">
             <div className="relative max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -373,7 +347,6 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUser }) => {
             </table>
           </div>
         </div>
-      )}
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingUsername ? 'Sửa user' : 'Thêm user'}>
         <form onSubmit={handleSubmitUser} className="space-y-4">

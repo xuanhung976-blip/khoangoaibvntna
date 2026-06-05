@@ -10,10 +10,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import {
-  Role,
-  RolePermission,
   STAFF_EVALUATION_TYPES,
-  STAFF_PERFORMANCE_PERMISSION_KEY,
   STAFF_TASK_PRIORITIES,
   STAFF_TASK_STATUSES,
   StaffEvaluation,
@@ -25,7 +22,6 @@ import {
   addStaffTask,
   deleteStaffEvaluation,
   deleteStaffTask,
-  getPermissions,
   getStaffEvaluations,
   getStaffTasks,
   getUsers,
@@ -41,7 +37,6 @@ type StaffPerformanceProps = {
 };
 
 type TabKey = 'tasks' | 'evaluations';
-type PermissionAction = 'canView' | 'canAdd' | 'canEdit' | 'canDelete';
 
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -177,7 +172,6 @@ export const StaffPerformance: React.FC<StaffPerformanceProps> = ({ currentUser 
   const [users, setUsers] = useState<User[]>([]);
   const [tasks, setTasks] = useState<StaffTask[]>([]);
   const [evaluations, setEvaluations] = useState<StaffEvaluation[]>([]);
-  const [permissions, setPermissions] = useState<RolePermission[]>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [activeTab, setActiveTab] = useState<TabKey>('tasks');
   const [loading, setLoading] = useState(false);
@@ -192,28 +186,18 @@ export const StaffPerformance: React.FC<StaffPerformanceProps> = ({ currentUser 
     loadData();
   }, []);
 
-  const hasPermission = (action: PermissionAction) => {
-    if (currentUser.role === Role.CHIEF) return true;
-    const permission = permissions.find(
-      (item) => item.role === currentUser.role && item.module === STAFF_PERFORMANCE_PERMISSION_KEY,
-    );
-    return permission ? toBool(permission[action]) : false;
-  };
-
-  const canView = hasPermission('canView');
-  const canAdd = hasPermission('canAdd');
-  const canEdit = hasPermission('canEdit');
-  const canDelete = hasPermission('canDelete');
+  const canAdd = true;
+  const canEdit = true;
+  const canDelete = true;
 
   const loadData = async () => {
     setLoading(true);
     setLoadError('');
     try {
-      const [usersData, taskData, evaluationData, permissionData] = await Promise.all([
+      const [usersData, taskData, evaluationData] = await Promise.all([
         getUsers(),
         getStaffTasks(),
         getStaffEvaluations(),
-        getPermissions(),
       ]);
 
       const safeUsers = Array.isArray(usersData) ? usersData : [];
@@ -223,7 +207,6 @@ export const StaffPerformance: React.FC<StaffPerformanceProps> = ({ currentUser 
       setUsers(safeUsers);
       setTasks(safeTasks);
       setEvaluations(safeEvaluations);
-      setPermissions(Array.isArray(permissionData) ? permissionData : []);
       setSelectedUserId((current) => {
         if (safeUsers.some((user) => user.username === current)) return current;
         return safeUsers[0]?.username || '';
@@ -416,13 +399,6 @@ export const StaffPerformance: React.FC<StaffPerformanceProps> = ({ currentUser 
 
   const scorePreview = calcScore(evaluationForm);
 
-  if (!loading && !canView) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center text-slate-500">
-        Bạn chưa có quyền xem module Công việc & Đánh giá.
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">

@@ -33,8 +33,8 @@ export const FiveS: React.FC<FiveSProps> = ({ userRole }) => {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const canEdit = [Role.CHIEF, Role.HEAD_NURSE, Role.STAFF].includes(userRole);
-  const canDelete = userRole === Role.CHIEF;
+  const canEdit = Boolean(userRole || true);
+  const canDelete = Boolean(userRole || true);
 
   useEffect(() => {
     loadData();

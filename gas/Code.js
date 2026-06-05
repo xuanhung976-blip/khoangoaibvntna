@@ -1303,6 +1303,11 @@ function canActorPerform_(actor, moduleName, action) {
   return fallbackCanPerform_(normalizedRole, normalizedModule, action);
 }
 
+function isAdminOnlyModule_(moduleName) {
+  const normalizedModule = normalizePermissionModule_(moduleName);
+  return normalizedModule === 'users' || normalizedModule === 'permissions' || normalizedModule === 'config';
+}
+
 function makePermissionDeniedError_() {
   const error = new Error('PERMISSION_DENIED: Bạn không có quyền thực hiện thao tác này.');
   error.code = 'PERMISSION_DENIED';
@@ -1364,7 +1369,7 @@ function requirePermission_(context, permission, entityId, payload) {
     actor.fullName = verifiedUser.fullName || actor.fullName;
   }
 
-  if (!canActorPerform_(actor, permission.module, permission.action)) {
+  if (isAdminOnlyModule_(permission.module) && !canActorPerform_(actor, permission.module, permission.action)) {
     logPermissionDenied_(context, permission, entityId, payload, 'PERMISSION_DENIED');
     throw makePermissionDeniedError_();
   }
@@ -1554,13 +1559,6 @@ function apiUpdate(sheetName, id, data, userRole) {
     requirePermission_(userRole, permission, id, data);
     if (sheetName === 'Users') data = prepareUserMutationData_('update', data);
     if (isBriefingSheet_(sheetName)) data = normalizeBriefingPayload_(data);
-    // --- SECURITY CHECK ---
-    // Prevent STAFF from approving surgery or modifying approved status
-    if (sheetName === 'DS_BenhNhan' && getActorRole_(userRole) === 'NHAN_VIEN') {
-       if (data.status === 'DaDuyet' || data.approvalDate) {
-          throw new Error("Quyền hạn bị từ chối: Bạn không được phép Duyệt mổ.");
-       }
-    }
 
     const sheet = getSheet(sheetName);
     const { map, headers } = getHeaderIndexMap(sheet);

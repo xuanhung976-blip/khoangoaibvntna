@@ -23,7 +23,6 @@ import { FiveS } from './pages/FiveS';
 import { Shifts } from './pages/Shifts';
 import { AdminConfig } from './pages/AdminConfig';
 import { AdminUsers } from './pages/AdminUsers';
-import { AdminPermissions } from './pages/AdminPermissions';
 import { StaffPerformance } from './pages/StaffPerformance';
 import { ToastContainer } from './components/Toast';
 import { clearSession, getSessionToken, logoutUser } from './services/dataService';
@@ -63,8 +62,14 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout }) => {
   );
 };
 
+const normalizeProtectedRole = (role: unknown) => {
+    const value = String(role || '').trim().toUpperCase();
+    if (value === 'ADMIN') return Role.CHIEF;
+    return value as Role;
+};
+
 const ProtectedRoute: React.FC<{ children: React.ReactNode, allowedRoles: Role[], userRole: Role }> = ({ children, allowedRoles, userRole }) => {
-    if (!allowedRoles.includes(userRole)) {
+    if (!allowedRoles.includes(normalizeProtectedRole(userRole))) {
         return <Navigate to="/" replace />;
     }
     return <>{children}</>;
@@ -169,12 +174,6 @@ const App: React.FC = () => {
                      <AdminUsers currentUser={user} />
                  </ProtectedRoute>
              } />
-             <Route path="/permissions" element={
-                 <ProtectedRoute allowedRoles={[Role.CHIEF]} userRole={user.role}>
-                     <AdminPermissions />
-                 </ProtectedRoute>
-             } />
-
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>

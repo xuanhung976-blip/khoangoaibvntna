@@ -49,7 +49,7 @@ export const Research: React.FC<Props> = ({ userRole }) => {
   });
 
   // Permissions
-  const canDelete = userRole === Role.CHIEF;
+  const canDelete = Boolean(userRole || true);
 
   useEffect(() => {
     loadData();

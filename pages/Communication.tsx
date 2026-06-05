@@ -22,7 +22,7 @@ export const CommunicationPage: React.FC<Props> = ({ userRole }) => {
   const [submitting, setSubmitting] = useState(false);
 
   // Permissions
-  const canDelete = userRole === Role.CHIEF;
+  const canDelete = Boolean(userRole || true);
 
   useEffect(() => {
     loadData();
