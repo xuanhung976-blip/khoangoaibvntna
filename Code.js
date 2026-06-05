@@ -1090,6 +1090,8 @@ function normalizeRole_(role) {
   if (ascii === 'TRUONG_KHOA' || ascii === 'TRUONGKHOA') return 'TRUONG_KHOA';
   if (ascii === 'DIEU_DUONG_TRUONG' || ascii === 'DIEUDUONGTRUONG') return 'DIEU_DUONG_TRUONG';
   if (ascii === 'NHAN_VIEN' || ascii === 'NHANVIEN' || ascii === 'STAFF') return 'NHAN_VIEN';
+  if (ascii === 'BAC_SI' || ascii === 'BACSI' || ascii === 'BS' || ascii === 'DOCTOR') return 'NHAN_VIEN';
+  if (ascii === 'DIEU_DUONG' || ascii === 'DIEUDUONG' || ascii === 'DD' || ascii === 'NURSE') return 'NHAN_VIEN';
 
   return ascii;
 }
@@ -1100,6 +1102,22 @@ function normalizePermissionAction_(action) {
   if (value === 'update' || value === 'edit' || value === 'approve' || value === 'reject' || value === 'reset_password' || value === 'activate' || value === 'deactivate' || value === 'change_progress_status' || value === 'batch_upsert') return 'edit';
   if (value === 'delete' || value === 'remove') return 'delete';
   return value || 'view';
+}
+
+function normalizePermissionModule_(moduleName) {
+  const ascii = String(moduleName || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+
+  if (ascii === 'clinical' || ascii === 'patient' || ascii === 'patients' || ascii === 'benhnhan' || ascii === 'benh_nhan' || ascii === 'ds_benhnhan' || ascii === 'ds_benh_nhan') return 'clinical';
+  if (ascii === 'surgery' || ascii === 'phauthuat' || ascii === 'phau_thuat' || ascii === 'duyet_mo') return 'surgery';
+  if (ascii === 'permissions' || ascii === 'phan_quyen' || ascii === 'roles_permission') return 'permissions';
+  if (ascii === 'users' || ascii === 'user' || ascii === 'quan_ly_nguoi_dung') return 'users';
+
+  return ascii;
 }
 
 function getActorFromContext_(context) {
@@ -1200,7 +1218,7 @@ function mapMutationToPermission_(sheetName, action, payload) {
   const permissionAction = normalizePermissionAction_(action);
   const auditAction = classifyAuditAction_(sheetName, action, payload || {}, null, null);
 
-  if (sheetName === 'DS_BenhNhan' && payload && (payload.status === 'DaDuyet' || payload.approvalDate)) {
+  if (sheetName === 'DS_BenhNhan' && permissionAction === 'edit' && payload && (payload.status === 'DaDuyet' || payload.approvalDate)) {
     return { module: 'surgery', action: 'edit', auditAction: 'approve', entityType: base.entityType };
   }
 
@@ -1237,29 +1255,34 @@ function findPermissionForRole_(role, moduleName) {
     return null;
   }
   const searchRole = normalizeRole_(role);
-  const searchModule = String(moduleName || '').trim().toLowerCase();
-  return permissions.find(permission =>
+  const searchModule = normalizePermissionModule_(moduleName);
+  const rolePermissions = permissions.filter(permission =>
     normalizeRole_(permission.role || permission.Role) === searchRole &&
+    normalizePermissionModule_(permission.module || permission.Module) === searchModule
+  );
+
+  return rolePermissions.find(permission =>
     String(permission.module || permission.Module || '').trim().toLowerCase() === searchModule
-  ) || null;
+  ) || rolePermissions[0] || null;
 }
 
 function fallbackCanPerform_(role, moduleName, action) {
   const normalizedRole = normalizeRole_(role);
   const normalizedAction = normalizePermissionAction_(action);
+  const normalizedModule = normalizePermissionModule_(moduleName);
 
   if (normalizedRole === 'TRUONG_KHOA') return true;
-  if (moduleName === 'users' || moduleName === 'permissions' || moduleName === 'config') return false;
+  if (normalizedModule === 'users' || normalizedModule === 'permissions' || normalizedModule === 'config') return false;
 
   const headNurseModules = ['clinical', 'surgery', 'vip', 'briefing', 'inventory', '5s', 'shifts', 'dieu_duong', 'staff_performance', 'research', 'meetings', 'technique', 'comms'];
   if (normalizedRole === 'DIEU_DUONG_TRUONG') {
-    return headNurseModules.indexOf(moduleName) !== -1;
+    return headNurseModules.indexOf(normalizedModule) !== -1;
   }
 
   if (normalizedRole === 'NHAN_VIEN') {
-    if (moduleName === 'surgery' && normalizedAction === 'edit') return false;
+    if (normalizedModule === 'surgery' && normalizedAction === 'edit') return false;
     const staffModules = ['clinical', 'vip', 'briefing', 'inventory', '5s', 'shifts', 'dieu_duong', 'staff_performance', 'research', 'meetings', 'technique', 'comms'];
-    return staffModules.indexOf(moduleName) !== -1;
+    return staffModules.indexOf(normalizedModule) !== -1;
   }
 
   return false;
@@ -1267,15 +1290,17 @@ function fallbackCanPerform_(role, moduleName, action) {
 
 function canActorPerform_(actor, moduleName, action) {
   if (!actor || !actor.role) return false;
-  if (actor.role === 'TRUONG_KHOA') return true;
-  if (moduleName === 'users' || moduleName === 'permissions' || moduleName === 'config') return false;
+  const normalizedRole = normalizeRole_(actor.role);
+  const normalizedModule = normalizePermissionModule_(moduleName);
+  if (normalizedRole === 'TRUONG_KHOA') return true;
+  if (normalizedModule === 'users' || normalizedModule === 'permissions' || normalizedModule === 'config') return false;
 
-  const permission = findPermissionForRole_(actor.role, moduleName);
+  const permission = findPermissionForRole_(normalizedRole, normalizedModule);
   if (permission) {
     return getPermissionValue_(permission, action);
   }
 
-  return fallbackCanPerform_(actor.role, moduleName, action);
+  return fallbackCanPerform_(normalizedRole, normalizedModule, action);
 }
 
 function makePermissionDeniedError_() {

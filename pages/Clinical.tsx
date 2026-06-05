@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Search, Trash2, Edit2, Loader2, BedDouble, UserCheck, Syringe, Hash, Star, Activity, Printer, Phone, Filter, ArrowUpDown } from 'lucide-react';
-import { Patient, Role, User, APP_LOGO_URL } from '../types';
-import { getPatients, addPatient, updatePatient, deletePatient, getDoctorsList, getVipPatients } from '../services/dataService';
+import { Patient, Role, User, APP_LOGO_URL, RolePermission } from '../types';
+import { getPatients, addPatient, updatePatient, deletePatient, getDoctorsList, getVipPatients, getPermissions } from '../services/dataService';
 import { showToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
 
@@ -41,6 +41,7 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [vipIds, setVipIds] = useState<Set<string>>(new Set());
   const [doctors, setDoctors] = useState<{id: string, fullName: string}[]>([]);
+  const [permissions, setPermissions] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(false);
   
   // --- FILTERS & SORT STATE ---
@@ -64,16 +65,41 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
   const [submitting, setSubmitting] = useState(false);
 
   // Permissions
-  const isDoctor = user.nhomChuyenMon === 'BS';
-  const canAdd = user.role === Role.CHIEF || user.role === Role.HEAD_NURSE || isDoctor;
+  const normalizeRole = (role?: string) => {
+      const value = String(role || '').trim().toUpperCase();
+      if (value === 'ADMIN') return Role.CHIEF;
+      if (value === 'BAC_SI' || value === 'BS' || value === 'DIEU_DUONG' || value === 'DD') return Role.STAFF;
+      return value as Role;
+  };
+  const normalizeModule = (module?: string) => {
+      const value = String(module || '').trim().toLowerCase();
+      if (['clinical', 'patients', 'patient', 'benhnhan', 'benh_nhan', 'ds_benhnhan', 'ds_benh_nhan', 'bệnh nhân'].includes(value)) return 'clinical';
+      return value;
+  };
+  const toBool = (value: unknown) => value === true || value === 'true' || value === 'TRUE' || value === '1' || value === 1;
+  const normalizedUserRole = normalizeRole(user.role);
+  const clinicalPermission = useMemo(() => {
+      const exact = permissions.find(p => normalizeRole(p.role as any) === normalizedUserRole && normalizeModule(p.module) === 'clinical');
+      return exact || null;
+  }, [permissions, normalizedUserRole]);
+  const isDoctorOrNurse = user.nhomChuyenMon === 'BS' || user.nhomChuyenMon === 'DD';
+  const clinicalFallback = normalizedUserRole === Role.CHIEF || normalizedUserRole === Role.HEAD_NURSE || normalizedUserRole === Role.STAFF || isDoctorOrNurse;
+  const hasClinicalPermission = (key: keyof Pick<RolePermission, 'canView' | 'canAdd' | 'canEdit' | 'canDelete'>) => {
+      if (normalizedUserRole === Role.CHIEF) return true;
+      if (clinicalPermission) return toBool(clinicalPermission[key]);
+      return key === 'canDelete' ? false : clinicalFallback;
+  };
+  const canAdd = hasClinicalPermission('canAdd');
+  const canEdit = hasClinicalPermission('canEdit');
   const hasExplicitDelete = String(user.canDeletePatient).toLowerCase() === 'true';
-  const canDelete = user.role === Role.CHIEF || hasExplicitDelete;
+  const canDelete = hasClinicalPermission('canDelete') || hasExplicitDelete;
   
   const TOTAL_BEDS = 27;
 
   useEffect(() => {
     loadData();
     loadDoctors();
+    loadPermissions();
   }, []);
 
   // Auto-switch modal tab based on status if opening existing patient
@@ -112,6 +138,16 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
           const list = await getDoctorsList();
           setDoctors(list);
       } catch (e) { console.error(e); }
+  };
+
+  const loadPermissions = async () => {
+      try {
+          const list = await getPermissions();
+          setPermissions(Array.isArray(list) ? list : []);
+      } catch (e) {
+          console.warn('Cannot load clinical permissions, using fallback permissions.', e);
+          setPermissions([]);
+      }
   };
 
   // Helper to extract year safely from YYYY or YYYY-MM-DD
@@ -254,6 +290,15 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
   // --- HANDLERS ---
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isEditing && !canEdit) {
+        showToast('Ban khong co quyen sua ho so benh nhan', 'error');
+        return;
+    }
+    if (!isEditing && !canAdd) {
+        showToast('Ban khong co quyen them benh nhan', 'error');
+        return;
+    }
     
     // 1. Sanitize Inputs
     const safeId = (currentPatient.id || '').trim();
@@ -435,6 +480,10 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
   };
 
   const openAdd = () => {
+    if (!canAdd) {
+        showToast('Ban khong co quyen them benh nhan', 'error');
+        return;
+    }
     setCurrentPatient({ 
         id: '', 
         name: '',
@@ -454,6 +503,10 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
   };
 
   const openEdit = (p: Patient) => {
+    if (!canEdit) {
+        showToast('Ban khong co quyen sua ho so benh nhan', 'error');
+        return;
+    }
     setCurrentPatient({ ...p });
     setModalTab('general');
     setIsEditing(true);
@@ -710,7 +763,7 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
                             <td className="px-4 py-3 align-top"><StatusBadge status={p.status} /></td>
                             <td className="px-4 py-3 align-top text-right">
                                 <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={(e) => { e.stopPropagation(); openEdit(p); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"><Edit2 className="h-4 w-4" /></button>
+                                    {canEdit && <button onClick={(e) => { e.stopPropagation(); openEdit(p); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"><Edit2 className="h-4 w-4" /></button>}
                                     {canDelete && <button onClick={(e) => { e.stopPropagation(); setDeleteId(p.id); setIsDeleteModalOpen(true); }} className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 className="h-4 w-4" /></button>}
                                 </div>
                             </td>
@@ -773,7 +826,7 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
 
                 <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
                     <button onClick={() => setSelectedPatient(null)} className="px-4 py-2 text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200">Đóng</button>
-                    {canAdd && <button onClick={switchToEditFromDetail} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Edit2 className="h-4 w-4" /> Chỉnh sửa</button>}
+                    {canEdit && <button onClick={switchToEditFromDetail} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Edit2 className="h-4 w-4" /> Chỉnh sửa</button>}
                 </div>
             </div>
         )}

@@ -181,4 +181,94 @@ function initializeSystem() {
     ]);
     Logger.log('Created default admin user');
   }
+
+  seedDefaultClinicalPermissions_(ss);
+}
+
+function seedDefaultClinicalPermissions_(ss) {
+  const sheet = ss.getSheetByName('Roles_Permission');
+  if (!sheet) return;
+
+  const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+  const headerMap = {};
+  headers.forEach((header, index) => headerMap[String(header).trim().toLowerCase()] = index);
+
+  const existing = [];
+  if (sheet.getLastRow() > 1) {
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+    values.forEach(row => {
+      existing.push({
+        role: String(row[headerMap['role']] || '').trim(),
+        module: String(row[headerMap['module']] || '').trim()
+      });
+    });
+  }
+
+  const defaults = [
+    { role: 'TRUONG_KHOA', module: 'clinical', canView: true, canAdd: true, canEdit: true, canDelete: true },
+    { role: 'DIEU_DUONG_TRUONG', module: 'clinical', canView: true, canAdd: true, canEdit: true, canDelete: false },
+    { role: 'NHAN_VIEN', module: 'clinical', canView: true, canAdd: true, canEdit: true, canDelete: false },
+    { role: 'BAC_SI', module: 'clinical', canView: true, canAdd: true, canEdit: true, canDelete: false },
+    { role: 'DIEU_DUONG', module: 'clinical', canView: true, canAdd: true, canEdit: true, canDelete: false },
+    { role: 'ADMIN', module: 'clinical', canView: true, canAdd: true, canEdit: true, canDelete: true }
+  ];
+
+  defaults.forEach(permission => {
+    const exists = existing.some(item =>
+      initializeNormalizeSeedRole_(item.role) === initializeNormalizeSeedRole_(permission.role) &&
+      initializeNormalizeClinicalModule_(item.module) === 'clinical'
+    );
+    if (exists) return;
+
+    const row = headers.map(header => {
+      const key = String(header).trim().toLowerCase();
+      if (key === 'id') return permission.role + '_' + permission.module;
+      if (key === 'role') return permission.role;
+      if (key === 'module') return permission.module;
+      if (key === 'canview') return permission.canView;
+      if (key === 'canadd') return permission.canAdd;
+      if (key === 'canedit') return permission.canEdit;
+      if (key === 'candelete') return permission.canDelete;
+      return '';
+    });
+    sheet.appendRow(row);
+    existing.push({ role: permission.role, module: permission.module });
+    Logger.log('Seeded clinical permission: ' + permission.role);
+  });
+}
+
+function initializeNormalizeRole_(role) {
+  const ascii = String(role || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  if (ascii === 'ADMIN') return 'TRUONG_KHOA';
+  if (ascii === 'BAC_SI' || ascii === 'BACSI' || ascii === 'BS' || ascii === 'DOCTOR') return 'NHAN_VIEN';
+  if (ascii === 'DIEU_DUONG' || ascii === 'DIEUDUONG' || ascii === 'DD' || ascii === 'NURSE') return 'NHAN_VIEN';
+  if (ascii === 'DIEU_DUONG_TRUONG' || ascii === 'DIEUDUONGTRUONG') return 'DIEU_DUONG_TRUONG';
+  if (ascii === 'NHAN_VIEN' || ascii === 'NHANVIEN' || ascii === 'STAFF') return 'NHAN_VIEN';
+  if (ascii === 'TRUONG_KHOA' || ascii === 'TRUONGKHOA') return 'TRUONG_KHOA';
+  return ascii;
+}
+
+function initializeNormalizeSeedRole_(role) {
+  return String(role || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+function initializeNormalizeClinicalModule_(moduleName) {
+  const ascii = String(moduleName || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (ascii === 'clinical' || ascii === 'patient' || ascii === 'patients' || ascii === 'benhnhan' || ascii === 'benh_nhan' || ascii === 'ds_benhnhan' || ascii === 'ds_benh_nhan') return 'clinical';
+  return ascii;
 }
