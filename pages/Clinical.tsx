@@ -66,10 +66,19 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
 
   // Permissions
   const normalizeRole = (role?: string) => {
-      const value = String(role || '').trim().toUpperCase();
-      if (value === 'ADMIN') return Role.CHIEF;
-      if (value === 'BAC_SI' || value === 'BS' || value === 'DIEU_DUONG' || value === 'DD') return Role.STAFF;
-      return value as Role;
+      const value = String(role || '')
+          .trim()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toUpperCase()
+          .replace(/[\s-]+/g, '_');
+      if (value === 'ADMIN') return 'ADMIN';
+      if (value === 'CHIEF' || value === 'TRUONG_KHOA' || value === 'TRUONGKHOA') return Role.CHIEF;
+      if (value === 'HEAD_NURSE' || value === 'DIEU_DUONG_TRUONG' || value === 'DIEUDUONGTRUONG') return Role.HEAD_NURSE;
+      if (value === 'BAC_SI' || value === 'BACSI' || value === 'BS' || value === 'DOCTOR') return 'BAC_SI';
+      if (value === 'DIEU_DUONG' || value === 'DIEUDUONG' || value === 'DD' || value === 'NURSE') return 'DIEU_DUONG';
+      if (value === 'STAFF' || value === 'NHAN_VIEN' || value === 'NHANVIEN') return Role.STAFF;
+      return value;
   };
   const normalizeModule = (module?: string) => {
       const value = String(module || '').trim().toLowerCase();
@@ -77,22 +86,89 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
       return value;
   };
   const toBool = (value: unknown) => value === true || value === 'true' || value === 'TRUE' || value === '1' || value === 1;
+  const normalizePermissionModule = (module?: string) => {
+      const legacyModule = normalizeModule(module);
+      if (legacyModule === 'clinical') return 'clinical';
+      const value = String(module || '')
+          .trim()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/[\s-]+/g, '_');
+      if (['clinical', 'patients', 'patient', 'benhnhan', 'benh_nhan', 'ds_benhnhan', 'ds_benh_nhan'].includes(value)) return 'clinical';
+      return value;
+  };
+  const parsePermissionBool = (value: unknown) => {
+      if (toBool(value)) return true;
+      if (value === true || value === 1) return true;
+      if (value === false || value === 0 || value === null || value === undefined) return false;
+      const normalized = String(value)
+          .trim()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+      return normalized === 'true' || normalized === '1' || normalized === 'co' || normalized === 'yes' || normalized === 'y';
+  };
+  const getPermissionField = (permission: RolePermission | null, key: 'role' | 'module' | 'canView' | 'canAdd' | 'canEdit' | 'canDelete') => {
+      if (!permission) return undefined;
+      const raw = permission as any;
+      const aliases: Record<typeof key, string[]> = {
+          role: ['role', 'Role'],
+          module: ['module', 'Module'],
+          canView: ['canView', 'CanView', 'view'],
+          canAdd: ['canAdd', 'CanAdd', 'canCreate', 'CanCreate', 'create', 'add'],
+          canEdit: ['canEdit', 'CanEdit', 'canUpdate', 'CanUpdate', 'edit', 'update'],
+          canDelete: ['canDelete', 'CanDelete', 'delete', 'remove']
+      };
+      const foundKey = aliases[key].find(alias => raw[alias] !== undefined);
+      return foundKey ? raw[foundKey] : undefined;
+  };
   const normalizedUserRole = normalizeRole(user.role);
+  const specialtyRole = user.nhomChuyenMon === 'BS' ? 'BAC_SI' : user.nhomChuyenMon === 'DD' ? 'DIEU_DUONG' : '';
+  const permissionRoles = useMemo(() => {
+      const orderedRoles = normalizedUserRole === Role.STAFF && specialtyRole
+          ? [specialtyRole, normalizedUserRole]
+          : [normalizedUserRole, specialtyRole, Role.STAFF];
+      return orderedRoles.filter((role, index, roles) => role && roles.indexOf(role) === index);
+  }, [normalizedUserRole, specialtyRole]);
   const clinicalPermission = useMemo(() => {
-      const exact = permissions.find(p => normalizeRole(p.role as any) === normalizedUserRole && normalizeModule(p.module) === 'clinical');
-      return exact || null;
-  }, [permissions, normalizedUserRole]);
+      return permissionRoles
+          .map(role => permissions.find(p => normalizeRole(getPermissionField(p, 'role') as string) === role && normalizePermissionModule(getPermissionField(p, 'module') as string) === 'clinical') || null)
+          .find(Boolean) || null;
+  }, [permissions, permissionRoles]);
   const isDoctorOrNurse = user.nhomChuyenMon === 'BS' || user.nhomChuyenMon === 'DD';
-  const clinicalFallback = normalizedUserRole === Role.CHIEF || normalizedUserRole === Role.HEAD_NURSE || normalizedUserRole === Role.STAFF || isDoctorOrNurse;
+  const clinicalFallback = normalizedUserRole === 'ADMIN' || normalizedUserRole === Role.CHIEF || normalizedUserRole === Role.HEAD_NURSE || normalizedUserRole === Role.STAFF || normalizedUserRole === 'BAC_SI' || normalizedUserRole === 'DIEU_DUONG' || isDoctorOrNurse;
   const hasClinicalPermission = (key: keyof Pick<RolePermission, 'canView' | 'canAdd' | 'canEdit' | 'canDelete'>) => {
-      if (normalizedUserRole === Role.CHIEF) return true;
-      if (clinicalPermission) return toBool(clinicalPermission[key]);
+      if (normalizedUserRole === 'ADMIN' || normalizedUserRole === Role.CHIEF) return true;
+      if (clinicalPermission) {
+          const permissionRole = normalizeRole(getPermissionField(clinicalPermission, 'role') as string);
+          const explicitProfessionalPermission = permissionRole === normalizedUserRole || permissionRole === specialtyRole;
+          if (key === 'canAdd' && !parsePermissionBool(getPermissionField(clinicalPermission, 'canAdd')) && parsePermissionBool(getPermissionField(clinicalPermission, 'canView')) && (normalizedUserRole === 'BAC_SI' || normalizedUserRole === 'DIEU_DUONG' || isDoctorOrNurse)) {
+              return explicitProfessionalPermission ? false : true;
+          }
+          return parsePermissionBool(getPermissionField(clinicalPermission, key));
+      }
       return key === 'canDelete' ? false : clinicalFallback;
   };
   const canAdd = hasClinicalPermission('canAdd');
   const canEdit = hasClinicalPermission('canEdit');
   const hasExplicitDelete = String(user.canDeletePatient).toLowerCase() === 'true';
   const canDelete = hasClinicalPermission('canDelete') || hasExplicitDelete;
+
+  useEffect(() => {
+      if (!import.meta.env.DEV) return;
+      console.debug('[Clinical permissions]', {
+          canAdd,
+          canEdit,
+          canDelete,
+          currentUserRole: user.role,
+          nhomChuyenMon: user.nhomChuyenMon,
+          normalizedUserRole,
+          permissionRoles,
+          module: 'clinical',
+          clinicalPermission
+      });
+  }, [canAdd, canEdit, canDelete, user.role, user.nhomChuyenMon, normalizedUserRole, permissionRoles, clinicalPermission]);
   
   const TOTAL_BEDS = 27;
 
