@@ -37,7 +37,7 @@ export const ScaffoldPage: React.FC<ScaffoldPageProps> = ({
   const [submitting, setSubmitting] = useState(false);
 
   // Permission Check
-  const hasWriteAccess = canEdit && Boolean(userRole || true);
+  const hasWriteAccess = canEdit;
 
   useEffect(() => {
     loadData();

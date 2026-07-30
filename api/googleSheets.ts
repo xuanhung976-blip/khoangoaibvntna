@@ -106,7 +106,7 @@ const REQUIRED_HEADERS_BY_SHEET: Record<string, string[]> = {
   Roles_Permission: ['ID', 'Role', 'Module', 'CanView', 'CanAdd', 'CanEdit', 'CanDelete'],
   DS_BenhNhan: [
     'ID', 'Name', 'Dob', 'Gender', 'Room', 'Bed', 'TreatmentType', 'Status', 'Diagnosis',
-    'TreatingDoctor', 'AdmissionDate', 'Notes', 'SurgeryDate', 'Surgeon', 'SurgeryMethod',
+    'TreatingDoctor', 'AdmissionDate', 'Notes', 'SurgeryDate', 'SurgeryOrder', 'Surgeon', 'SurgeryMethod',
     'AssistantSurgeon1', 'AssistantSurgeon2', 'AssistantSurgeon3', 'Anesthetist',
     'AnesthetistAssistant', 'ScrubNurse', 'ApprovalDate', 'ApprovalNote', 'ActualSurgeryDate',
     'SurgeryClassification', 'InterventionType', 'ActivityType', 'PhoneNumber', 'DischargeDate',
@@ -287,19 +287,44 @@ export function objectToRow(data: Record<string, any>, headers: string[]): any[]
 }
 
 export async function getRows(sheetName: string): Promise<any[]> {
-  await ensureSheetHeaders(sheetName);
+  // Single API call: read all data at once (header row included)
   const values = await getSheetValues(sheetName);
-  if (values.length < 2) return [];
+  if (values.length < 1) return [];
 
-  const headers = values[0] as string[];
+  const rawHeaders = (values[0] as string[] | undefined) ?? [];
+  const headers = rawHeaders.map(String);
+
+  // Append missing headers if needed (lazy migration)
+  const requiredHeaders = REQUIRED_HEADERS_BY_SHEET[sheetName] ?? [];
+  const finalHeaders = requiredHeaders.length
+    ? await appendMissingHeaders(sheetName, headers, requiredHeaders)
+    : headers;
+
   const dataRows = values.slice(1);
 
-  const rows = dataRows.map((row) => rowToObject(row as any[], headers));
+  // Filter out blank rows (all cells empty) before mapping
+  const nonBlankRows = dataRows.filter((row) =>
+    Array.isArray(row) && row.some((cell) => cell !== undefined && cell !== null && String(cell).trim() !== '')
+  );
+
+  const rows = nonBlankRows.map((row) => rowToObject(row as any[], finalHeaders));
+
+  // Deduplicate by ID/Username to prevent duplicate records from sheet corruption
+  const idKey = sheetName === 'Users' ? 'username' : 'id';
+  const seen = new Set<string>();
+  const deduped = rows.filter((row) => {
+    const id = String(row[idKey] ?? '').trim();
+    if (!id || seen.has(id.toLowerCase())) return false;
+    seen.add(id.toLowerCase());
+    return true;
+  });
+
   if (sheetName === 'Users') {
-    return rows.map(({ password, passwordHash, passwordSalt, ...safeUser }) => safeUser);
+    return deduped.map(({ password, passwordHash, passwordSalt, ...safeUser }) => safeUser);
   }
-  return rows;
+  return deduped;
 }
+
 
 export async function appendRow(
   sheetName: string,
@@ -329,7 +354,6 @@ async function findRowIndexById(
   sheetName: string,
   id: string,
 ): Promise<{ rowIndex: number; headers: string[]; map: Record<string, number> }> {
-  const sheets = getSheetsClient();
   const { headers, map } = await getHeaderIndexMap(sheetName);
   const idCol = sheetName === 'Users' ? map['username'] : map['id'];
 

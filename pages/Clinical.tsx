@@ -1,10 +1,11 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Search, Trash2, Edit2, Loader2, BedDouble, UserCheck, Syringe, Hash, Star, Activity, Printer, Phone, Filter, ArrowUpDown } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Plus, Search, Trash2, Edit2, Loader2, BedDouble, UserCheck, Syringe, Hash, Star, Activity, Printer, Phone, Filter, ArrowUpDown, FileSpreadsheet } from 'lucide-react';
 import { Patient, User, APP_LOGO_URL } from '../types';
 import { getPatients, addPatient, updatePatient, deletePatient, getDoctorsList, getVipPatients } from '../services/dataService';
 import { showToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
+import { getAge, exportToExcel } from '../utils/exportUtils';
 
 interface ClinicalProps {
   user: User;
@@ -37,12 +38,26 @@ const ModalTabs = ({ active, onChange }: { active: string, onChange: (t: string)
     </div>
 );
 
+const getSessionCache = <T,>(key: string, fallback: T): T => {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
-  const [patients, setPatients] = useState<Patient[]>([]);
-  const [vipIds, setVipIds] = useState<Set<string>>(new Set());
-  const [doctors, setDoctors] = useState<{id: string, fullName: string}[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [patients, setPatients] = useState<Patient[]>(() => getSessionCache('cache_clinical_patients', []));
+  const [vipIds, setVipIds] = useState<Set<string>>(() => new Set(getSessionCache('cache_clinical_vip_ids', [])));
+  const [doctors, setDoctors] = useState<{id: string, fullName: string}[]>(() => getSessionCache('cache_clinical_doctors', []));
+  const [loading, setLoading] = useState<boolean>(() => getSessionCache('cache_clinical_patients', []).length === 0);
   
+  // Guard: prevent concurrent fetches from creating duplicate rows
+  const isFetchingRef = useRef(false);
+  // Track fetch sequence to discard stale responses
+  const fetchSeqRef = useRef(0);
+
   // --- FILTERS & SORT STATE ---
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('All');
@@ -66,65 +81,82 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
   const canAdd = true;
   const canEdit = true;
   const canDelete = true;
-    const TOTAL_BEDS = 27;
+  const TOTAL_BEDS = 27;
+
+  const loadData = useCallback(async (options?: { bypassCache?: boolean }) => {
+    // Prevent concurrent fetches — skip if already in progress
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    // Increment sequence so stale responses are discarded
+    const seq = ++fetchSeqRef.current;
+
+    // Show spinner only if we don't have any cached data yet
+    if (patients.length === 0 || options?.bypassCache) {
+      setLoading(true);
+    }
+
+    try {
+      // Load patients first (critical path), then vips lazily
+      const rawData = await getPatients(options);
+
+      // Discard if a newer fetch was triggered while awaiting
+      if (seq !== fetchSeqRef.current) return;
+
+      // Normalize IDs to string and deduplicate by ID (prevents duplicate rows)
+      const seen = new Set<string>();
+      const normalizedData = (rawData as Patient[])
+          .filter(p => {
+              if (!p || !p.id) return false; // discard blank rows
+              const pid = String(p.id).trim();
+              if (!pid || seen.has(pid)) return false;
+              seen.add(pid);
+              return true;
+          })
+          .map(p => ({ ...p, id: String(p.id).trim() }));
+
+      setPatients(normalizedData);
+      try {
+        sessionStorage.setItem('cache_clinical_patients', JSON.stringify(normalizedData));
+      } catch { /* storage full fallback */ }
+
+      // Load VIPs asynchronously — do not block patient list rendering
+      getVipPatients(options).then((vips: any[]) => {
+          if (seq !== fetchSeqRef.current) return;
+          const vipArray = (vips || []).map((v: any) => String(v.patientId).trim());
+          setVipIds(new Set(vipArray));
+          try {
+            sessionStorage.setItem('cache_clinical_vip_ids', JSON.stringify(vipArray));
+          } catch { /* fallback */ }
+      }).catch(() => { /* VIP load failure is non-critical */ });
+
+    } catch (e) {
+      if (seq === fetchSeqRef.current) {
+          showToast('Lỗi tải dữ liệu bệnh nhân', 'error');
+      }
+    } finally {
+      if (seq === fetchSeqRef.current) {
+          setLoading(false);
+      }
+      isFetchingRef.current = false;
+    }
+  }, [patients.length]);
+
+  const loadDoctors = async (options?: { bypassCache?: boolean }) => {
+      try {
+          const list = await getDoctorsList(options as any);
+          setDoctors(list);
+          try {
+            sessionStorage.setItem('cache_clinical_doctors', JSON.stringify(list));
+          } catch { /* fallback */ }
+      } catch (e) { console.error(e); }
+  };
 
   useEffect(() => {
     loadData();
     loadDoctors();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Auto-switch modal tab based on status if opening existing patient
-  useEffect(() => {
-      if (isModalOpen && currentPatient.status === 'DaMo') {
-          // If editing a post-op patient, keeping 'general' is fine, but ensure logic exists
-      }
-  }, [isModalOpen, currentPatient.status]);
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [data, vips] = await Promise.all([
-          getPatients(),
-          getVipPatients()
-      ]);
-      
-      const normalizedData = data.map(p => ({
-          ...p,
-          id: String(p.id)
-      }));
-      setPatients(normalizedData);
-      
-      // Store VIP IDs for quick lookup
-      setVipIds(new Set(vips.map((v: any) => v.patientId)));
-
-    } catch (e) {
-      showToast('Lỗi tải dữ liệu', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadDoctors = async () => {
-      try {
-          const list = await getDoctorsList();
-          setDoctors(list);
-      } catch (e) { console.error(e); }
-  };
-
-  // Helper to extract year safely from YYYY or YYYY-MM-DD
-  const extractYear = (dob?: string) => {
-      if (!dob) return '';
-      return String(dob).split('-')[0];
-  };
-
-  const getAge = (dob: string) => {
-    if (!dob) return '';
-    // New: Year-only calculation
-    const year = parseInt(extractYear(dob));
-    if (isNaN(year)) return '';
-    const currentYear = new Date().getFullYear();
-    return currentYear - year;
-  };
 
   const formatDate = (dateString?: string) => {
       if (!dateString) return '-';
@@ -274,11 +306,17 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
     if (!safeDiagnosis) { showToast('Vui lòng nhập Chẩn đoán', 'error'); setModalTab('clinical'); return; }
 
     // 3. Prepare Payload
+    const isRfa = (currentPatient.interventionType === 'RFA') || (currentPatient.surgeryMethod || '').toLowerCase().includes('rfa');
+    const derivedActivityType = isRfa ? 'Thủ thuật' : (currentPatient.surgeryMethod || currentPatient.interventionType) ? 'Phẫu thuật' : currentPatient.activityType;
+    const effectiveActualSurgeryDate = currentPatient.actualSurgeryDate || currentPatient.surgeryDate || '';
+
     const patientData = { 
         ...currentPatient, 
         id: safeId, 
         name: safeName, 
         diagnosis: safeDiagnosis,
+        actualSurgeryDate: effectiveActualSurgeryDate,
+        activityType: derivedActivityType,
         // Ensure critical defaults if missing
         status: currentPatient.status || 'ChoMo',
         admissionDate: currentPatient.admissionDate || new Date().toISOString().split('T')[0]
@@ -302,7 +340,7 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
             showToast('Tiếp nhận bệnh nhân thành công', 'success');
         }
         setIsModalOpen(false);
-        loadData();
+        loadData({ bypassCache: true });
     } catch (e: any) {
         showToast('Lỗi: ' + (e.message || e), 'error');
     } finally {
@@ -317,13 +355,70 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
         await deletePatient(deleteId);
         showToast('Đã xoá hồ sơ bệnh nhân', 'success');
         setIsDeleteModalOpen(false);
-        loadData();
+        loadData({ bypassCache: true });
     } catch (e: any) {
         showToast('Lỗi xoá: ' + (e.message || e), 'error');
     } finally {
         setSubmitting(false);
         setDeleteId(null);
     }
+  };
+
+  const handleExportExcel = () => {
+      if (sortedPatients.length === 0) {
+          showToast('Không có dữ liệu để xuất Excel', 'warning');
+          return;
+      }
+
+      const statusMap: Record<string, string> = {
+          'All': 'TỔNG HỢP (NỘI TRÚ)',
+          'ChoMo': 'CHỜ MỔ',
+          'DaDuyet': 'ĐÃ DUYỆT MỔ',
+          'DaMo': 'HẬU PHẪU',
+          'DieuTri': 'ĐIỀU TRỊ NỘI KHOA',
+          'RaVien': 'ĐÃ RA VIỆN'
+      };
+      const statusText = statusMap[filterStatus] || 'TỔNG HỢP';
+      const dateStr = new Date().toLocaleDateString('vi-VN');
+
+      const headers = [
+          'STT',
+          'Mã BN',
+          'Họ và tên',
+          'Tuổi',
+          'GT',
+          'Phòng / Giường',
+          'Chẩn đoán',
+          'BS Điều trị',
+          'SĐT',
+          'Ghi chú'
+      ];
+
+      const rows = sortedPatients.map((p, index) => [
+          index + 1,
+          p.id || '',
+          p.name || '',
+          getAge(p.dob),
+          p.gender || '',
+          `${p.room || '-'}${p.bed ? ` / ${p.bed}` : ''}`,
+          p.diagnosis || '',
+          p.treatingDoctor ? p.treatingDoctor.split('.').pop()?.trim() : '-',
+          p.phoneNumber || '',
+          p.notes || ''
+      ]);
+
+      exportToExcel({
+          fileName: `Danh_Sach_Benh_Nhan_${filterStatus}_${new Date().toISOString().split('T')[0]}.xlsx`,
+          sheetName: 'DS Bệnh nhân',
+          title: `DANH SÁCH BỆNH NHÂN ${statusText}`,
+          subtitle: `Ngày in: ${dateStr} (Tổng số: ${sortedPatients.length} bệnh nhân)`,
+          headers,
+          rows,
+          signers: ['NGƯỜI LẬP BIỂU'],
+          creatorName: user.fullName
+      });
+
+      showToast('Đã xuất file Excel thành công', 'success');
   };
 
   const handlePrintList = () => {
@@ -355,66 +450,71 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
         <html lang="vi">
         <head>
             <meta charset="UTF-8">
-            <title>Danh sách Bệnh nhân</title>
+            <title>Danh sách Bệnh nhân - Khoa Ngoại</title>
             <style>
-                body { font-family: 'Times New Roman', serif; padding: 20px; font-size: 13px; }
+                @page { size: A4 landscape; margin: 6mm 8mm; }
+                * { box-sizing: border-box; }
+                body { font-family: 'Times New Roman', serif; margin: 0; padding: 10px; font-size: 10.5pt; color: #000; background: #fff; width: 100%; }
                 h1, h2, h3, h4, p { margin: 0; }
-                table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-                th, td { border: 1px solid #000; padding: 6px; vertical-align: middle; }
-                th { background-color: #f0f0f0; font-weight: bold; text-align: center; }
-                .header-container { display: flex; align-items: center; gap: 15px; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
-                .hospital { font-weight: bold; text-transform: uppercase; font-size: 12pt; }
-                .dept { font-weight: bold; text-transform: uppercase; font-size: 11pt; color: #444; }
-                .title { font-weight: bold; font-size: 16pt; text-transform: uppercase; text-align: center; margin-top: 10px; }
-                .date { font-style: italic; font-size: 11pt; text-align: center; margin-bottom: 15px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 12px; table-layout: fixed; }
+                th, td { border: 1px solid #000; padding: 5px 6px; font-size: 10pt; vertical-align: middle; word-wrap: break-word; overflow-wrap: break-word; }
+                th { background-color: #f2f2f2 !important; font-weight: bold; text-align: center; padding: 7px 5px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                thead { display: table-header-group; }
+                tr { page-break-inside: avoid; }
+                .header-container { display: flex; align-items: center; justify-content: space-between; border-bottom: 1.5px solid #000; padding-bottom: 8px; margin-bottom: 12px; }
+                .hospital { font-size: 11pt; font-weight: bold; text-transform: uppercase; }
+                .dept { font-size: 10pt; font-weight: bold; text-transform: uppercase; color: #222; }
+                .title { font-size: 15pt; font-weight: bold; text-transform: uppercase; text-align: center; margin-top: 8px; }
+                .date { font-style: italic; font-size: 10pt; text-align: center; margin-bottom: 8px; }
                 .text-center { text-align: center; }
-                .footer { margin-top: 30px; display: flex; justify-content: flex-end; }
-                .sign-box { text-align: center; min-width: 200px; }
-                
-                @media print {
-                    @page { margin: 10mm; size: A4 landscape; }
-                    body { -webkit-print-color-adjust: exact; }
-                }
+                .footer { margin-top: 25px; display: flex; justify-content: flex-end; page-break-inside: avoid; }
+                .sign-box { text-align: center; min-width: 220px; }
+                .sign-title { font-weight: bold; margin-bottom: 50px; font-size: 10.5pt; }
             </style>
         </head>
         <body>
             <div class="header-container">
-                <img src="${APP_LOGO_URL}" alt="" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; background: white;" />
-                <div>
-                    <div class="hospital">BỆNH VIỆN NỘI TIẾT NGHỆ AN</div>
-                    <div class="dept">KHOA NGOẠI TỔNG HỢP</div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <img src="${APP_LOGO_URL}" alt="" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover;" />
+                    <div>
+                        <div class="hospital">BỆNH VIỆN NỘI TIẾT NGHỆ AN</div>
+                        <div class="dept">KHOA NGOẠI TỔNG HỢP</div>
+                    </div>
+                </div>
+                <div style="text-align: right; font-size: 9.5pt; font-style: italic;">
+                    Hệ thống Quản lý Bệnh nhân
                 </div>
             </div>
 
             <div class="title">DANH SÁCH BỆNH NHÂN ${statusText}</div>
-            <div class="date">Ngày in: ${dateStr}</div>
+            <div class="date">Ngày in: ${dateStr} (Tổng số: ${sortedPatients.length} bệnh nhân)</div>
 
             <table>
                 <thead>
                     <tr>
-                        <th style="width: 40px;">STT</th>
-                        <th style="width: 90px;">Mã BN</th>
-                        <th>Họ tên</th>
-                        <th style="width: 50px;">Tuổi</th>
-                        <th style="width: 50px;">GT</th>
-                        <th style="width: 80px;">Phòng</th>
-                        <th>Chẩn đoán</th>
-                        <th style="width: 120px;">BS Điều trị</th>
-                        <th style="width: 100px;">Ghi chú</th>
+                        <th style="width: 4%;">STT</th>
+                        <th style="width: 9%;">Mã BN</th>
+                        <th style="width: 17%;">Họ và tên</th>
+                        <th style="width: 6%;">Tuổi</th>
+                        <th style="width: 5%;">GT</th>
+                        <th style="width: 10%;">P / Giường</th>
+                        <th style="width: 26%;">Chẩn đoán</th>
+                        <th style="width: 14%;">BS Điều trị</th>
+                        <th style="width: 9%;">SĐT</th>
                     </tr>
                 </thead>
                 <tbody>
                     ${sortedPatients.map((p, index) => `
                         <tr>
                             <td class="text-center">${index + 1}</td>
-                            <td class="text-center">${p.id}</td>
+                            <td class="text-center"><b>${p.id}</b></td>
                             <td><b>${p.name}</b></td>
                             <td class="text-center">${getAge(p.dob)}</td>
                             <td class="text-center">${p.gender}</td>
-                            <td class="text-center">${p.room || '-'} / ${p.bed || '-'}</td>
-                            <td>${p.diagnosis}</td>
+                            <td class="text-center">${p.room || '-'}${p.bed ? ` / ${p.bed}` : ''}</td>
+                            <td>${p.diagnosis || '-'}</td>
                             <td>${p.treatingDoctor ? p.treatingDoctor.split('.').pop()?.trim() : '-'}</td>
-                            <td>${p.notes || ''}</td>
+                            <td class="text-center">${p.phoneNumber || '-'}</td>
                         </tr>
                     `).join('')}
                 </tbody>
@@ -423,9 +523,8 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
             <div class="footer">
                 <div class="sign-box">
                     <p style="font-style: italic">Ngày ..... tháng ..... năm .....</p>
-                    <p style="font-weight: bold; margin-top: 5px;">NGƯỜI LẬP BIỂU</p>
-                    <br><br><br>
-                    <p>${user.fullName}</p>
+                    <div class="sign-title">NGƯỜI LẬP BIỂU</div>
+                    <p><b>${user.fullName}</b></p>
                 </div>
             </div>
 
@@ -468,7 +567,70 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
         showToast('Ban khong co quyen sua ho so benh nhan', 'error');
         return;
     }
-    setCurrentPatient({ ...p });
+    const method = (p.surgeryMethod || p.notes || '').toLowerCase();
+    const diag = (p.diagnosis || '').toLowerCase();
+    const rawIType = (p.interventionType || '').trim();
+    const iTypeUpper = rawIType.toUpperCase();
+
+    const isRfa =
+      iTypeUpper.includes('RFA') ||
+      p.activityType === 'Thủ thuật' ||
+      method.includes('rfa') ||
+      diag.includes('rfa');
+
+    let autoActualDate = p.actualSurgeryDate || p.surgeryDate || p.admissionDate || '';
+    let autoActivityType = p.activityType;
+    let autoInterventionType = p.interventionType;
+    let autoClassification = p.surgeryClassification;
+
+    if (isRfa) {
+      autoActivityType = 'Thủ thuật';
+      if (!autoInterventionType) autoInterventionType = 'RFA';
+      if (!autoClassification) autoClassification = 'Đặc biệt';
+    } else {
+      if (p.surgeryMethod || p.interventionType) {
+        autoActivityType = 'Phẫu thuật';
+      }
+      if (!autoInterventionType && method) {
+        if (method.includes('toetva')) autoInterventionType = 'TOETVA';
+        else if (diag.includes('k giáp') || method.includes('k giáp') || method.includes('ung thư')) autoInterventionType = 'Mổ K tuyến giáp';
+        else if (diag.includes('basedow') || method.includes('basedow')) autoInterventionType = 'Basedow';
+        else if (method.includes('giao cảm') || method.includes('đốt hạch') || method.includes('ets')) autoInterventionType = 'PTNS đốt hạch giao cảm';
+        else if (diag.includes('lành') || method.includes('thuỳ') || method.includes('nhân')) autoInterventionType = 'Cắt 1 thuỳ tuyến giáp';
+      }
+
+      if (!autoClassification && method) {
+        if (
+          method.includes('nạo hạch') ||
+          method.includes('tbtg nạo hạch') ||
+          iTypeUpper.includes('NẠO HẠCH') ||
+          (method.includes('toetva') && (method.includes('nạo hạch') || method.includes('tbtg')))
+        ) {
+          autoClassification = 'Đặc biệt';
+        } else if (
+          method.includes('toetva') ||
+          diag.includes('k giáp') ||
+          method.includes('k giáp') ||
+          method.includes('giao cảm') ||
+          method.includes('đốt hạch') ||
+          method.includes('ets') ||
+          diag.includes('basedow') ||
+          method.includes('basedow')
+        ) {
+          autoClassification = 'Loại I';
+        } else {
+          autoClassification = 'Loại II';
+        }
+      }
+    }
+
+    setCurrentPatient({
+      ...p,
+      actualSurgeryDate: autoActualDate,
+      activityType: autoActivityType,
+      interventionType: autoInterventionType,
+      surgeryClassification: autoClassification,
+    });
     setModalTab('general');
     setIsEditing(true);
     setIsModalOpen(true);
@@ -567,6 +729,14 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
 
              {/* Action Buttons */}
              <div className="flex gap-2 shrink-0">
+                 <button 
+                    onClick={handleExportExcel}
+                    className="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm font-medium text-sm"
+                 >
+                    <FileSpreadsheet className="h-4 w-4" />
+                    <span className="hidden sm:inline">Xuất Excel</span>
+                 </button>
+
                  <button 
                     onClick={handlePrintList}
                     className="flex items-center gap-2 bg-white text-slate-700 border border-slate-300 px-3 py-2 rounded-lg hover:bg-slate-50 hover:text-blue-600 transition-colors shadow-sm font-medium text-sm"
@@ -819,8 +989,8 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
                         <input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" value={currentPatient.name || ''} onChange={e => setCurrentPatient(p => ({...p, name: e.target.value}))} />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Năm sinh</label>
-                        <input type="number" min="1900" max={new Date().getFullYear()} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" value={extractYear(currentPatient.dob)} onChange={e => setCurrentPatient(p => ({...p, dob: e.target.value}))} placeholder="VD: 1985" />
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Năm sinh / Tuổi</label>
+                        <input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={currentPatient.dob || ''} onChange={e => setCurrentPatient(p => ({...p, dob: e.target.value}))} placeholder="VD: 1985 hoặc 45" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Giới tính <span className="text-red-500">*</span></label>
@@ -909,41 +1079,136 @@ export const Clinical: React.FC<ClinicalProps> = ({ user }) => {
 
             {/* TAB 3: SURGERY */}
             <div className={modalTab === 'surgery' ? 'block space-y-4' : 'hidden'}>
-                <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 space-y-4">
-                    <div className="flex items-center gap-2 text-sm font-bold text-purple-800 uppercase tracking-wider mb-2">
-                        <Syringe className="h-4 w-4" /> Thông tin Phẫu thuật (Hậu kiểm)
+                <div className="bg-purple-50/80 p-4 rounded-xl border border-purple-100 space-y-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm font-bold text-purple-800 uppercase tracking-wider">
+                            <Syringe className="h-4 w-4 text-purple-600" /> Thông tin Phẫu thuật (Hậu kiểm)
+                        </div>
+                        <span className="text-xs text-purple-600 italic bg-purple-100 px-2 py-0.5 rounded font-medium">Lưu báo cáo thống kê</span>
                     </div>
+
                     <div>
-                        <label className="block text-sm font-medium text-purple-900 mb-1">Ngày phẫu thuật</label>
-                        <input type="date" className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white" value={currentPatient.actualSurgeryDate || ''} onChange={e => setCurrentPatient(p => ({...p, actualSurgeryDate: e.target.value}))} />
+                        <div className="flex justify-between items-center mb-1">
+                            <label className="block text-sm font-semibold text-purple-900">Ngày phẫu thuật</label>
+                            <button
+                                type="button"
+                                onClick={() => setCurrentPatient(p => ({
+                                    ...p,
+                                    actualSurgeryDate: new Date().toISOString().split('T')[0]
+                                }))}
+                                className="text-xs font-bold text-purple-700 hover:text-purple-900 bg-purple-100 hover:bg-purple-200 px-2 py-0.5 rounded transition-colors"
+                            >
+                                Hôm nay
+                            </button>
+                        </div>
+                        <input
+                            type="date"
+                            className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white font-medium text-slate-800"
+                            value={currentPatient.actualSurgeryDate || currentPatient.surgeryDate || ''}
+                            onChange={e => setCurrentPatient(p => ({ ...p, actualSurgeryDate: e.target.value }))}
+                        />
                     </div>
+
                     <div>
-                        <label className="block text-sm font-medium text-purple-900 mb-1">Cách thức phẫu thuật (Tường trình)</label>
-                        <input type="text" className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white" value={currentPatient.surgeryMethod || ''} onChange={e => setCurrentPatient(p => ({...p, surgeryMethod: e.target.value}))} />
+                        <label className="block text-sm font-semibold text-purple-900 mb-1">Cách thức phẫu thuật (Tường trình)</label>
+                        <input
+                            type="text"
+                            placeholder="VD: TOETVA cắt toàn bộ tuyến giáp, RFA u tuyến giáp, Mổ nội soi..."
+                            className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white font-medium text-slate-800"
+                            value={currentPatient.surgeryMethod || ''}
+                            onChange={e => setCurrentPatient(p => ({ ...p, surgeryMethod: e.target.value }))}
+                        />
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-purple-900 mb-1">Loại phẫu thuật</label>
-                            <select className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white" value={currentPatient.surgeryClassification || ''} onChange={e => setCurrentPatient(p => ({...p, surgeryClassification: e.target.value as any}))}>
-                                <option value="">-- Chọn loại --</option>
+                            <label className="block text-sm font-semibold text-purple-900 mb-1">Nhóm kỹ thuật</label>
+                            <select
+                                className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white font-medium text-slate-800 cursor-pointer"
+                                value={currentPatient.interventionType || ''}
+                                onChange={e => {
+                                    const val = e.target.value;
+                                    setCurrentPatient(p => {
+                                        const updated: Partial<Patient> = { ...p, interventionType: val };
+                                        
+                                        // 1. RFA: Thủ thuật - Loại Đặc biệt
+                                        if (val === 'RFA') {
+                                            updated.activityType = 'Thủ thuật';
+                                            updated.surgeryClassification = 'Đặc biệt';
+                                            if (!p.surgeryMethod) updated.surgeryMethod = 'Can thiệp Đốt sóng cao tần (RFA)';
+                                        } 
+                                        // 2. TOETVA Đặc biệt (Cắt TBTG / Nạo hạch)
+                                        else if (val === 'TOETVA_DAC_BIET') {
+                                            updated.interventionType = 'TOETVA';
+                                            updated.activityType = 'Phẫu thuật';
+                                            updated.surgeryClassification = 'Đặc biệt';
+                                            if (!p.surgeryMethod) updated.surgeryMethod = 'PTNS ngả miệng (TOETVA) cắt TBTG nạo hạch';
+                                        }
+                                        // 3. TOETVA Loại I (Cắt thuỳ / Bảo tồn)
+                                        else if (val === 'TOETVA_LOAI_1') {
+                                            updated.interventionType = 'TOETVA';
+                                            updated.activityType = 'Phẫu thuật';
+                                            updated.surgeryClassification = 'Loại I';
+                                            if (!p.surgeryMethod) updated.surgeryMethod = 'PTNS ngả miệng (TOETVA) cắt 1 thuỳ';
+                                        }
+                                        // 4. Cắt TBTG Nạo hạch (Đặc biệt)
+                                        else if (val === 'CAT_TBTG_NAO_HACH') {
+                                            updated.interventionType = 'Mổ K tuyến giáp';
+                                            updated.activityType = 'Phẫu thuật';
+                                            updated.surgeryClassification = 'Đặc biệt';
+                                            if (!p.surgeryMethod) updated.surgeryMethod = 'Cắt toàn bộ tuyến giáp nạo hạch cổ';
+                                        }
+                                        // 5. ETS (PTNS Đốt hạch giao cảm - Loại I)
+                                        else if (val === 'ETS') {
+                                            updated.interventionType = 'PTNS đốt hạch giao cảm';
+                                            updated.activityType = 'Phẫu thuật';
+                                            updated.surgeryClassification = 'Loại I';
+                                            if (!p.surgeryMethod) updated.surgeryMethod = 'PTNS đốt hạch giao cảm trị tăng tiết mồ hôi (ETS)';
+                                        }
+                                        // 6. Basedow / Mổ K giáp thường (Loại I)
+                                        else if (val === 'Mổ K tuyến giáp' || val === 'Cắt toàn bộ tuyến giáp' || val === 'Basedow') {
+                                            updated.activityType = 'Phẫu thuật';
+                                            updated.surgeryClassification = 'Loại I';
+                                            if (!p.surgeryMethod) updated.surgeryMethod = val === 'Basedow' ? 'Phẫu thuật tuyến giáp Basedow' : 'Phẫu thuật cắt toàn bộ tuyến giáp';
+                                        }
+                                        // 7. Cắt 1 thuỳ (Loại II)
+                                        else if (val === 'Cắt 1 thuỳ tuyến giáp') {
+                                            updated.activityType = 'Phẫu thuật';
+                                            updated.surgeryClassification = 'Loại II';
+                                            if (!p.surgeryMethod) updated.surgeryMethod = 'Phẫu thuật cắt 1 thuỳ tuyến giáp';
+                                        }
+                                        else if (val) {
+                                            updated.activityType = 'Phẫu thuật';
+                                        }
+
+                                        return updated;
+                                    });
+                                }}
+                            >
+                                <option value="">-- Chọn nhóm kỹ thuật --</option>
+                                <option value="RFA">⚡ RFA (Thủ thuật Đặc biệt - Đốt sóng cao tần)</option>
+                                <option value="TOETVA_DAC_BIET">🔪 TOETVA - Cắt TBTG nạo hạch (PT Đặc biệt)</option>
+                                <option value="TOETVA_LOAI_1">🔪 TOETVA - Cắt thuỳ / Bảo tồn (PT Loại I)</option>
+                                <option value="CAT_TBTG_NAO_HACH">🔪 Cắt TBTG + Nạo hạch cổ (PT Đặc biệt)</option>
+                                <option value="Mổ K tuyến giáp">🔪 Mổ K tuyến giáp / Cắt TBTG (PT Loại I)</option>
+                                <option value="ETS">🔪 PTNS đốt hạch giao cảm ETS (PT Loại I)</option>
+                                <option value="Basedow">🔪 Basedow (PT Loại I)</option>
+                                <option value="Cắt 1 thuỳ tuyến giáp">🔪 Cắt 1 thuỳ tuyến giáp (PT Loại II)</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-purple-900 mb-1">Loại phẫu thuật</label>
+                            <select
+                                className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white font-medium text-slate-800 cursor-pointer"
+                                value={currentPatient.surgeryClassification || ''}
+                                onChange={e => setCurrentPatient(p => ({ ...p, surgeryClassification: e.target.value as any }))}
+                            >
+                                <option value="">-- Chọn phân loại --</option>
                                 <option value="Đặc biệt">Đặc biệt</option>
                                 <option value="Loại I">Loại I</option>
                                 <option value="Loại II">Loại II</option>
                                 <option value="Loại III">Loại III</option>
-                            </select>
-                        </div>
-                        <div>
-                             <label className="block text-sm font-medium text-purple-900 mb-1">Nhóm kỹ thuật</label>
-                            <select className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white" value={currentPatient.interventionType || ''} onChange={e => setCurrentPatient(p => ({...p, interventionType: e.target.value}))}>
-                                <option value="">-- Chọn nhóm --</option>
-                                <option value="Mổ K tuyến giáp">Mổ K tuyến giáp</option>
-                                <option value="Cắt toàn bộ tuyến giáp">Cắt toàn bộ tuyến giáp</option>
-                                <option value="Basedow">Basedow</option>
-                                <option value="Cắt 1 thuỳ tuyến giáp">Cắt 1 thuỳ tuyến giáp</option>
-                                <option value="TOETVA">TOETVA</option>
-                                <option value="PTNS đốt hạch giao cảm">PTNS đốt hạch giao cảm</option>
-                                <option value="RFA">RFA (Đốt sóng cao tần)</option>
-                                <option value="Phẫu thuật khác">Phẫu thuật khác</option>
                             </select>
                         </div>
                     </div>

@@ -39,11 +39,9 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Fetch all required data in parallel
-      const [briefingData, patientData, vipData, userData] = await Promise.all([
+      // Load critical data first (briefings + patients for report)
+      const [briefingData, userData] = await Promise.all([
           getBriefings(),
-          getPatients(),
-          getVipPatients(),
           getUsers()
       ]);
 
@@ -80,9 +78,14 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
       const sortedBriefings = parsedBriefings.sort((a: DailyBriefing, b: DailyBriefing) => new Date(b.date).getTime() - new Date(a.date).getTime());
       
       setBriefings(sortedBriefings);
-      setPatients(patientData || []);
-      setVipPatients(vipData || []);
       setUsers(safeUsers);
+
+      // Load patient data lazily — do not block giao ban render
+      Promise.all([getPatients(), getVipPatients()]).then(([patientData, vipData]) => {
+          setPatients(patientData || []);
+          setVipPatients(vipData || []);
+      }).catch(() => { /* patient data is non-critical for briefing */ });
+
     } catch (e) {
       console.error("Error loading briefing data:", e);
       showToast('Lỗi tải dữ liệu giao ban', 'error');
@@ -113,8 +116,8 @@ export const DailyBriefingPage: React.FC<Props> = ({ userRole }) => {
         }
         setIsModalOpen(false);
         loadData();
-    } catch (e) {
-        showToast('Lỗi: ' + e, 'error');
+    } catch (e: any) {
+        showToast('Lỗi: ' + (e?.message || 'Không thể lưu giao ban'), 'error');
     } finally {
         setSubmitting(false);
     }

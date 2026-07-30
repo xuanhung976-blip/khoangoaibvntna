@@ -40,6 +40,7 @@ export interface Patient {
   
   // Pre-op Planning (Duyệt mổ)
   surgeryDate?: string;          // NgayMoDuKien (Planned)
+  surgeryOrder?: number;         // ThuTuCaMo (1, 2, 3...)
   approvalDate?: string;         // NgayDuyetMo
   approvalNote?: string;         // GhiChuDuyetMo
   surgeon?: string;              // BSMoChinh

@@ -26,7 +26,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setLoading(true);
 
     try {
-      const user = await loginUser(username, password);
+      const user = await loginUser(username.trim(), password);
 
       if (user) {
         onLogin(user);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Calendar as CalendarIcon, Save, User, ArrowLeft, ArrowRight, Loader2, Plus, Trash2, Wand2 } from 'lucide-react';
 import { DailyOnCall, Role } from '../types';
 import { getDailyOnCall, saveDailyOnCall, deleteDailyOnCall, batchSaveDailyOnCall, getPersonnelLists } from '../services/dataService';
@@ -53,7 +53,9 @@ export const Shifts: React.FC<Props> = ({ userRole }) => {
     }
   };
 
-  const getShiftForDate = (date: string) => shifts.find(s => s.date === date) || { date, doctor: '', nurse1: '', nurse2: '' };
+  const getShiftForDate = useCallback((date: string) =>
+    shifts.find(s => s.date === date) || { date, doctor: '', nurse1: '', nurse2: '' }
+  , [shifts]);
 
   useEffect(() => {
     if (viewMode === 'daily') {
@@ -86,8 +88,8 @@ export const Shifts: React.FC<Props> = ({ userRole }) => {
           await saveDailyOnCall(currentShift as DailyOnCall);
           showToast('Đã lưu lịch trực', 'success');
           loadData();
-      } catch (e) {
-          showToast('Lỗi lưu: ' + e, 'error');
+      } catch (e: any) {
+          showToast('Lỗi lưu: ' + (e?.message || 'Không thể lưu lịch trực'), 'error');
       } finally {
           setSubmitting(false);
       }
@@ -99,8 +101,8 @@ export const Shifts: React.FC<Props> = ({ userRole }) => {
           await batchSaveDailyOnCall(weeklyShifts);
           showToast('Đã lưu lịch tuần thành công', 'success');
           loadData();
-      } catch (e) {
-          showToast('Lỗi lưu tuần: ' + e, 'error');
+      } catch (e: any) {
+          showToast('Lỗi lưu tuần: ' + (e?.message || 'Không thể lưu lịch tuần'), 'error');
       } finally {
           setSubmitting(false);
       }

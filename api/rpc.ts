@@ -6,7 +6,66 @@ type RpcRequest = {
   funcName: string;
   args: any[];
   sessionToken?: string;
+  bypassCache?: boolean;
 };
+
+type CacheEntry = {
+  data: any;
+  timestamp: number;
+};
+
+// In-memory cache across Vercel serverless warm invocations
+const rpcCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds TTL for read requests
+
+function getCacheKey(funcName: string, args: any[]): string | null {
+  const readFuncs = [
+    'apiGet',
+    'getDoctors',
+    'getVipPatientsJoined',
+    'getDashboardOverview',
+    'getPersonnelLists',
+    'getBriefings',
+    'getPermissions',
+  ];
+
+  if (!readFuncs.includes(funcName)) return null;
+  return `${funcName}:${JSON.stringify(args)}`;
+}
+
+function isWriteFunction(funcName: string): boolean {
+  const writeFuncs = [
+    'apiAdd',
+    'apiUpdate',
+    'apiDelete',
+    'addVipPatientSafe',
+    'batchSaveDailyOnCall',
+    'saveRolePermissions',
+    'changeMyPassword',
+    'resetUserPassword',
+    'toggleLockUser',
+  ];
+  return writeFuncs.includes(funcName);
+}
+
+function invalidateCache(funcName: string, args: any[]) {
+  if (!isWriteFunction(funcName)) return;
+
+  const targetSheet = args?.[0];
+  if (targetSheet && typeof targetSheet === 'string') {
+    for (const key of rpcCache.keys()) {
+      if (
+        key.includes(targetSheet) ||
+        key.startsWith('getVipPatientsJoined') ||
+        key.startsWith('getDashboardOverview')
+      ) {
+        rpcCache.delete(key);
+      }
+    }
+  } else {
+    rpcCache.clear();
+  }
+}
 
 function jsonResponse(res: any, status: number, data: any) {
   res.status(status).json(data);
@@ -91,6 +150,28 @@ export default async function handler(req: any, res: any) {
 
   const funcName = payload?.funcName;
   const args = Array.isArray(payload?.args) ? payload?.args : [];
+  const bypassCache = Boolean(payload?.bypassCache);
+
+  if (!funcName || typeof funcName !== 'string') {
+    errorResponse(res, 400, 'RPC_BAD_REQUEST', 'Invalid payload: funcName is required');
+    return;
+  }
+
+  // Handle write functions -> invalidate relevant cache entries
+  if (isWriteFunction(funcName)) {
+    invalidateCache(funcName, args);
+  }
+
+  // Handle read functions -> check memory cache
+  const cacheKey = getCacheKey(funcName, args);
+  if (cacheKey && !bypassCache) {
+    const cached = rpcCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      jsonResponse(res, 200, cached.data);
+      return;
+    }
+  }
+
   const authHeader =
     typeof req?.headers?.authorization === 'string'
       ? req.headers.authorization
@@ -113,11 +194,6 @@ export default async function handler(req: any, res: any) {
     typeof req?.headers?.['user-agent'] === 'string'
       ? req.headers['user-agent']
       : '';
-
-  if (!funcName || typeof funcName !== 'string') {
-    errorResponse(res, 400, 'RPC_BAD_REQUEST', 'Invalid payload: funcName is required');
-    return;
-  }
 
   try {
     const gasResponse = await fetch(gasApiUrl, {
@@ -152,7 +228,22 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    jsonResponse(res, 200, normalizeGasResponse(parsed));
+    const normalizedData = normalizeGasResponse(parsed);
+
+    // Save successful read results to memory cache
+    if (cacheKey && normalizedData && !(typeof normalizedData === 'object' && normalizedData.success === false)) {
+      rpcCache.set(cacheKey, {
+        data: normalizedData,
+        timestamp: Date.now(),
+      });
+    }
+
+    // Invalidate again after successful write to ensure consistency
+    if (isWriteFunction(funcName)) {
+      invalidateCache(funcName, args);
+    }
+
+    jsonResponse(res, 200, normalizedData);
   } catch (err: any) {
     console.error('[RPC PROXY] Forward failed', {
       funcName,
@@ -161,3 +252,4 @@ export default async function handler(req: any, res: any) {
     errorResponse(res, 502, 'RPC_FETCH_FAILED', err?.message || 'Failed to reach Google Apps Script');
   }
 }
+

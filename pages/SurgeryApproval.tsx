@@ -1,10 +1,10 @@
-
-import React, { useState, useEffect } from 'react';
-import { CheckCircle, Search, Clock, ClipboardList, PenTool, Loader2, Users2, Activity, Syringe, Printer, CalendarDays, Eye } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { CheckCircle, Search, Clock, ClipboardList, PenTool, Loader2, Users2, Activity, Syringe, Printer, CalendarDays, Eye, FileSpreadsheet, ArrowUp, ArrowDown, Hash } from 'lucide-react';
 import { Patient, Role, APP_LOGO_URL } from '../types';
-import { getPatients, updateSurgeryStatus, getPersonnelLists } from '../services/dataService';
+import { getPatients, updatePatient, updateSurgeryStatus, getPersonnelLists } from '../services/dataService';
 import { showToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
+import { getAge, exportToExcel } from '../utils/exportUtils';
 
 interface Props {
   userRole: Role;
@@ -21,7 +21,7 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
   const [activeTab, setActiveTab] = useState<Tab>('pending');
   
   // Print Schedule State
-  const [scheduleDate, setScheduleDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [scheduleDate, setScheduleDate] = useState<string>('');
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -29,24 +29,31 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
   const [approvalData, setApprovalData] = useState<Partial<Patient>>({});
   const [submitting, setSubmitting] = useState(false);
 
-  const canApprove = Boolean(userRole || true);
+  const canApprove = true; // Cho phép tất cả bác sĩ/nhân viên y tế xem, duyệt và cập nhật lịch mổ
 
   useEffect(() => {
     loadData();
   }, []);
 
+  const safePatients = Array.isArray(patients) ? patients : [];
+  const safeDoctors = Array.isArray(doctors) ? doctors : [];
+  const safeNurses = Array.isArray(nurses) ? nurses : [];
+
   const loadData = async () => {
     setLoading(true);
     try {
       const [allPatients, personnel] = await Promise.all([
-          getPatients(),
-          getPersonnelLists()
+          getPatients().catch(() => []),
+          getPersonnelLists().catch(() => ({ doctors: [], nurses: [] }))
       ]);
-      setPatients(allPatients);
-      setDoctors(personnel.doctors);
-      setNurses(personnel.nurses);
+      setPatients(Array.isArray(allPatients) ? allPatients : []);
+      setDoctors(Array.isArray(personnel?.doctors) ? personnel.doctors : []);
+      setNurses(Array.isArray(personnel?.nurses) ? personnel.nurses : []);
     } catch (e) {
       showToast('Lỗi tải dữ liệu', 'error');
+      setPatients([]);
+      setDoctors([]);
+      setNurses([]);
     } finally {
       setLoading(false);
     }
@@ -54,8 +61,19 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
 
   const handleApproveClick = (p: Patient) => {
     setSelectedPatient(p);
+    const targetDate = p.surgeryDate || scheduleDate || new Date().toISOString().split('T')[0];
+    
+    // Find next order number if not set yet
+    let defaultOrder = p.surgeryOrder;
+    if (!defaultOrder) {
+      const sameDatePatients = patients.filter(item => item.status === 'DaDuyet' && item.surgeryDate === targetDate);
+      const maxOrder = Math.max(0, ...sameDatePatients.map(item => item.surgeryOrder || 0));
+      defaultOrder = maxOrder + 1;
+    }
+
     setApprovalData({
-        surgeryDate: p.surgeryDate || new Date().toISOString().split('T')[0],
+        surgeryDate: targetDate,
+        surgeryOrder: defaultOrder,
         surgeryMethod: p.surgeryMethod || '',
         surgeon: p.surgeon || '',
         assistantSurgeon1: p.assistantSurgeon1 || '',
@@ -67,6 +85,56 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
         approvalNote: p.approvalNote || ''
     });
     setIsModalOpen(true);
+  };
+
+  const handleSetSurgeryOrder = async (targetPatient: Patient, targetOrder: number) => {
+    const dailyApproved = safePatients
+      .filter(p => p.status === 'DaDuyet' && p.surgeryDate === scheduleDate)
+      .sort((a, b) => (a.surgeryOrder || 999) - (b.surgeryOrder || 999));
+
+    const oldIndex = dailyApproved.findIndex(p => p.id === targetPatient.id);
+    if (oldIndex === -1) return;
+
+    const newIndex = Math.max(0, Math.min(targetOrder - 1, dailyApproved.length - 1));
+    if (oldIndex === newIndex) return;
+
+    // Re-arrange array locally
+    const listCopy = [...dailyApproved];
+    const [movedItem] = listCopy.splice(oldIndex, 1);
+    listCopy.splice(newIndex, 0, movedItem);
+
+    // Re-assign explicit 1, 2, 3...
+    const changedPatients: { id: string; newOrder: number }[] = [];
+    const updatedPatientsMap = new Map<string, number>();
+
+    listCopy.forEach((item, idx) => {
+      const freshOrder = idx + 1;
+      updatedPatientsMap.set(item.id, freshOrder);
+      if (item.surgeryOrder !== freshOrder) {
+        changedPatients.push({ id: item.id, newOrder: freshOrder });
+      }
+    });
+
+    // 1. INSTANT 0ms Optimistic State Update in React
+    setPatients(prev =>
+      prev.map(p => {
+        if (updatedPatientsMap.has(p.id)) {
+          return { ...p, surgeryOrder: updatedPatientsMap.get(p.id) };
+        }
+        return p;
+      })
+    );
+
+    showToast(`Đã xếp ${targetPatient.name} thành Ca ${newIndex + 1}`, 'success');
+
+    // 2. Non-blocking Parallel Backend Sync
+    try {
+      await Promise.all(
+        changedPatients.map(cp => updatePatient(cp.id, { surgeryOrder: cp.newOrder }))
+      );
+    } catch (e: any) {
+      console.error('Lỗi lưu thứ tự mổ:', e);
+    }
   };
 
   const validateForm = () => {
@@ -104,22 +172,78 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
         showToast(`Đã duyệt mổ cho BN ${selectedPatient.name}`, 'success');
         setIsModalOpen(false);
         loadData();
-    } catch (e) {
-        showToast('Lỗi khi duyệt mổ', 'error');
+    } catch (e: any) {
+        showToast('Lỗi khi duyệt mổ: ' + (e?.message || 'Không xác định'), 'error');
     } finally {
         setSubmitting(false);
     }
   };
 
-  const handlePrintDailySchedule = () => {
-      // 1. Filter Data
-      const dailyList = patients.filter(p => 
-          p.status === 'DaDuyet' && 
-          p.surgeryDate === scheduleDate
-      );
+  const handleExportDailyScheduleExcel = () => {
+      const effectiveDate = scheduleDate || new Date().toISOString().split('T')[0];
+      const dailyList = patients
+          .filter(p => p.status === 'DaDuyet' && p.surgeryDate === effectiveDate)
+          .sort((a, b) => (a.surgeryOrder || 999) - (b.surgeryOrder || 999));
 
       if (dailyList.length === 0) {
-          showToast(`Không có ca mổ nào được duyệt cho ngày ${new Date(scheduleDate).toLocaleDateString('vi-VN')}`, 'info');
+          showToast(`Không có ca mổ nào được duyệt cho ngày ${new Date(effectiveDate).toLocaleDateString('vi-VN')}`, 'info');
+          return;
+      }
+
+      const headers = [
+          'Ca mổ',
+          'Họ tên BN / Tuổi / GT',
+          'Mã BN',
+          'Chẩn đoán',
+          'Phương pháp phẫu thuật',
+          'PTV Chính',
+          'Phụ mổ',
+          'Gây mê / Phụ mê',
+          'Ghi chú'
+      ];
+
+      const rows = dailyList.map((p, idx) => {
+          const ageVal = getAge(p.dob);
+          const nameAgeStr = `${p.name || ''} (${ageVal ? `${ageVal}T` : ''} - ${p.gender || ''})`;
+          const assistants = [p.assistantSurgeon1, p.assistantSurgeon2, p.assistantSurgeon3].filter(Boolean).join(', ');
+          const gmeStr = [p.anesthetist, p.anesthetistAssistant ? `Phụ: ${p.anesthetistAssistant}` : ''].filter(Boolean).join(' - ');
+          const caMoText = p.surgeryOrder ? `Ca ${p.surgeryOrder}` : `Ca ${idx + 1}`;
+
+          return [
+              caMoText,
+              nameAgeStr,
+              p.id || '',
+              p.diagnosis || '',
+              p.surgeryMethod || '',
+              p.surgeon || '',
+              assistants || '',
+              gmeStr || '',
+              p.approvalNote || ''
+          ];
+      });
+
+      exportToExcel({
+          fileName: `Lich_Phau_Thuat_${effectiveDate}.xlsx`,
+          sheetName: 'Lịch Phẫu Thuật',
+          title: 'DANH SÁCH PHẪU THUẬT TRONG NGÀY',
+          subtitle: `Ngày ${new Date(effectiveDate).toLocaleDateString('vi-VN')} (Tổng số: ${dailyList.length} ca mổ)`,
+          headers,
+          rows,
+          signers: ['PHỤ TRÁCH PHÒNG MỔ', 'LÃNH ĐẠO KHOA']
+      });
+
+      showToast('Đã xuất file Excel lịch mổ thành công', 'success');
+  };
+
+  const handlePrintDailySchedule = () => {
+      // 1. Filter & Sort Data by Surgery Order
+      const effectiveDate = scheduleDate || new Date().toISOString().split('T')[0];
+      const dailyList = patients
+          .filter(p => p.status === 'DaDuyet' && p.surgeryDate === effectiveDate)
+          .sort((a, b) => (a.surgeryOrder || 999) - (b.surgeryOrder || 999));
+
+      if (dailyList.length === 0) {
+          showToast(`Không có ca mổ nào được duyệt cho ngày ${new Date(effectiveDate).toLocaleDateString('vi-VN')}`, 'info');
           return;
       }
 
@@ -136,75 +260,82 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
         <html lang="vi">
         <head>
             <meta charset="UTF-8">
-            <title>Lịch Mổ Ngày ${scheduleDate}</title>
+            <title>Lịch Phẫu Thuật - Ngày ${effectiveDate}</title>
             <style>
-                @page { size: A4 landscape; margin: 10mm; }
-                body { font-family: 'Times New Roman', serif; padding: 20px; color: #000; }
-                table { width: 100%; border-collapse: collapse; font-size: 11pt; }
-                th, td { border: 1px solid #000; padding: 5px; vertical-align: top; }
-                th { background-color: #f0f0f0; text-align: center; font-weight: bold; padding: 8px 5px; }
-                .header-container { display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 25px; }
-                .hospital { font-size: 12pt; font-weight: bold; text-transform: uppercase; margin-bottom: 5px; }
-                .dept { font-size: 14pt; font-weight: bold; text-transform: uppercase; margin-bottom: 15px; }
-                .title { font-size: 18pt; font-weight: bold; text-transform: uppercase; margin-bottom: 5px; }
-                .date { font-style: italic; font-size: 12pt; text-align: center; }
+                @page { size: A4 landscape; margin: 6mm 8mm; }
+                * { box-sizing: border-box; }
+                body { font-family: 'Times New Roman', serif; margin: 0; padding: 10px; color: #000; background: #fff; font-size: 10.5pt; width: 100%; }
+                h1, h2, h3, h4, p { margin: 0; }
+                table { width: 100%; border-collapse: collapse; margin-top: 12px; table-layout: fixed; }
+                th, td { border: 1px solid #000; padding: 5px 6px; font-size: 10pt; vertical-align: middle; word-wrap: break-word; overflow-wrap: break-word; }
+                th { background-color: #f2f2f2 !important; text-align: center; font-weight: bold; padding: 7px 5px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                thead { display: table-header-group; }
+                tr { page-break-inside: avoid; }
+                .header-container { display: flex; align-items: center; justify-content: space-between; border-bottom: 1.5px solid #000; padding-bottom: 8px; margin-bottom: 12px; }
+                .hospital { font-size: 11pt; font-weight: bold; text-transform: uppercase; }
+                .dept { font-size: 10pt; font-weight: bold; text-transform: uppercase; color: #222; }
+                .title { font-size: 15pt; font-weight: bold; text-transform: uppercase; text-align: center; margin-top: 8px; }
+                .date { font-style: italic; font-size: 10pt; text-align: center; margin-bottom: 8px; }
                 .text-center { text-align: center; }
-                .footer { margin-top: 40px; display: flex; justify-content: space-around; page-break-inside: avoid; }
-                .sign-box { text-align: center; width: 200px; }
-                .sign-title { font-weight: bold; margin-bottom: 60px; }
+                .footer { margin-top: 25px; display: flex; justify-content: space-around; page-break-inside: avoid; }
+                .sign-box { text-align: center; width: 220px; }
+                .sign-title { font-weight: bold; margin-bottom: 50px; font-size: 10.5pt; }
             </style>
         </head>
         <body>
-            <div class="header-container" style="justify-content: flex-start; border-bottom: 1px solid #ccc; padding-bottom: 15px;">
-                <img src="${APP_LOGO_URL}" alt="" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; background: white;" />
-                <div>
-                    <div class="hospital">BỆNH VIỆN NỘI TIẾT NGHỆ AN</div>
-                    <div class="dept">KHOA NGOẠI TỔNG HỢP</div>
+            <div class="header-container">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <img src="${APP_LOGO_URL}" alt="" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover;" />
+                    <div>
+                        <div class="hospital">BỆNH VIỆN NỘI TIẾT NGHỆ AN</div>
+                        <div class="dept">KHOA NGOẠI TỔNG HỢP</div>
+                    </div>
+                </div>
+                <div style="text-align: right; font-size: 9.5pt; font-style: italic;">
+                    Hệ thống Quản lý Phẫu thuật
                 </div>
             </div>
 
-            <div style="text-align: center; margin-bottom: 20px;">
+            <div style="text-align: center; margin-bottom: 12px;">
                 <div class="title">DANH SÁCH PHẪU THUẬT TRONG NGÀY</div>
-                <div class="date">Ngày ${new Date(scheduleDate).toLocaleDateString('vi-VN')}</div>
+                <div class="date">Ngày ${new Date(effectiveDate).toLocaleDateString('vi-VN')} (Tổng số: ${dailyList.length} ca mổ)</div>
             </div>
 
             <table>
                 <thead>
                     <tr>
-                        <th style="width: 40px;">STT</th>
-                        <th style="width: 180px;">Họ tên BN / Tuổi</th>
-                        <th style="width: 90px;">Mã BN</th>
-                        <th>Chẩn đoán</th>
-                        <th>Phương pháp PT</th>
-                        <th style="width: 120px;">PTV Chính</th>
-                        <th style="width: 120px;">Phụ mổ</th>
-                        <th style="width: 120px;">Gây mê</th>
-                        <th style="width: 120px;">Dụng cụ</th>
+                        <th style="width: 6%;">Ca mổ</th>
+                        <th style="width: 18%;">Họ tên BN / Tuổi</th>
+                        <th style="width: 8%;">Mã BN</th>
+                        <th style="width: 22%;">Chẩn đoán</th>
+                        <th style="width: 18%;">Phương pháp PT</th>
+                        <th style="width: 11%;">PTV Chính</th>
+                        <th style="width: 9%;">Phụ mổ</th>
+                        <th style="width: 8%;">Gây mê</th>
                     </tr>
                 </thead>
                 <tbody>
                     ${dailyList.map((p, idx) => {
-                        const birthYear = p.dob ? new Date(p.dob).getFullYear() : '';
-                        const age = birthYear ? new Date().getFullYear() - birthYear : '';
+                        const ageVal = getAge(p.dob);
                         const assistants = [p.assistantSurgeon1, p.assistantSurgeon2, p.assistantSurgeon3].filter(Boolean).join(', ');
+                        const caText = p.surgeryOrder ? `Ca ${p.surgeryOrder}` : `Ca ${idx + 1}`;
                         
                         return `
                         <tr>
-                            <td class="text-center">${idx + 1}</td>
+                            <td class="text-center font-bold" style="background-color: #fafafa;">${caText}</td>
                             <td>
                                 <b>${p.name}</b>
-                                <div>${age ? `${age}T` : ''} - ${p.gender}</div>
+                                <div>${ageVal ? `${ageVal}T` : ''} - ${p.gender}</div>
                             </td>
-                            <td class="text-center font-mono">${p.id}</td>
-                            <td>${p.diagnosis}</td>
-                            <td>${p.surgeryMethod}</td>
+                            <td class="text-center"><b>${p.id}</b></td>
+                            <td>${p.diagnosis || '-'}</td>
+                            <td>${p.surgeryMethod || '-'}</td>
                             <td>${p.surgeon || '-'}</td>
                             <td>${assistants || '-'}</td>
                             <td>
                                 <div>${p.anesthetist || '-'}</div>
-                                <div style="font-size: 9pt; font-style: italic;">${p.anesthetistAssistant || ''}</div>
+                                <div style="font-size: 8.5pt; font-style: italic;">${p.anesthetistAssistant ? `Phụ: ${p.anesthetistAssistant}` : ''}</div>
                             </td>
-                            <td>${p.scrubNurse || '-'}</td>
                         </tr>
                         `;
                     }).join('')}
@@ -222,7 +353,7 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
             </div>
 
             <script>
-                window.onload = () => { window.print(); }
+                window.onload = function() { window.print(); }
             </script>
         </body>
         </html>
@@ -232,15 +363,44 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
       printWindow.document.close();
   };
 
-  const filtered = patients
-      .filter(p => activeTab === 'pending' ? p.status === 'ChoMo' : p.status === 'DaDuyet')
-      .filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.id.toLowerCase().includes(search.toLowerCase()))
-      .sort((a, b) => {
-          if (activeTab === 'pending') {
-              return new Date(a.admissionDate).getTime() - new Date(b.admissionDate).getTime();
-          }
-          return new Date(b.surgeryDate || '').getTime() - new Date(a.surgeryDate || '').getTime();
-      });
+  const filtered = useMemo(() => {
+    const searchLower = (search || '').trim().toLowerCase();
+    return safePatients
+        .filter(p => {
+            if (!p) return false;
+            return activeTab === 'pending' ? p.status === 'ChoMo' : p.status === 'DaDuyet';
+        })
+        .filter(p => {
+            // Pending tab: show all pending patients regardless of date
+            if (activeTab === 'pending') return true;
+            // Approved tab: if no date filter set, show ALL approved patients
+            if (!scheduleDate) return true;
+            // If date filter is set, match surgeryDate
+            return p.surgeryDate === scheduleDate;
+        })
+        .filter(p => {
+            if (!searchLower) return true;
+            const pName = String(p.name || '').toLowerCase();
+            const pId = String(p.id || '').toLowerCase();
+            const pDiag = String(p.diagnosis || '').toLowerCase();
+            return pName.includes(searchLower) || pId.includes(searchLower) || pDiag.includes(searchLower);
+        })
+        .sort((a, b) => {
+            if (activeTab === 'pending') {
+                const dateA = a.admissionDate ? new Date(a.admissionDate).getTime() : 0;
+                const dateB = b.admissionDate ? new Date(b.admissionDate).getTime() : 0;
+                return dateA - dateB;
+            }
+            // Sort by surgery date first (nearest first), then by order
+            const dateA = a.surgeryDate || '9999';
+            const dateB = b.surgeryDate || '9999';
+            if (dateA !== dateB) return dateA.localeCompare(dateB);
+            const orderA = typeof a.surgeryOrder === 'number' ? a.surgeryOrder : 999;
+            const orderB = typeof b.surgeryOrder === 'number' ? b.surgeryOrder : 999;
+            if (orderA !== orderB) return orderA - orderB;
+            return String(a.id || '').localeCompare(String(b.id || ''));
+        });
+  }, [safePatients, activeTab, scheduleDate, search]);
 
   return (
     <div className="space-y-6">
@@ -274,7 +434,19 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
               </div>
 
               {activeTab === 'approved' && (
-                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+                      <button
+                        onClick={() => setScheduleDate('')}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${!scheduleDate ? 'bg-blue-600 text-white border-blue-700 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                      >
+                        Tất cả
+                      </button>
+                      <button
+                        onClick={() => setScheduleDate(new Date().toISOString().split('T')[0])}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${scheduleDate === new Date().toISOString().split('T')[0] ? 'bg-blue-600 text-white border-blue-700 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                      >
+                        Hôm nay
+                      </button>
                       <div className="relative">
                         <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                         <input 
@@ -284,21 +456,41 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
                             onChange={e => setScheduleDate(e.target.value)}
                         />
                       </div>
-                      <button 
-                        onClick={handlePrintDailySchedule}
-                        className="flex items-center gap-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 hover:text-blue-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
-                      >
-                          <Printer className="h-4 w-4" />
-                          <span className="hidden sm:inline">In Lịch Ngày</span>
-                      </button>
+                      <div className="flex gap-2">
+                          <button 
+                            onClick={handleExportDailyScheduleExcel}
+                            className="flex items-center gap-2 bg-emerald-600 border border-emerald-700 text-white hover:bg-emerald-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
+                          >
+                              <FileSpreadsheet className="h-4 w-4" />
+                              <span className="hidden sm:inline">Xuất Excel</span>
+                          </button>
+                          <button 
+                            onClick={handlePrintDailySchedule}
+                            className="flex items-center gap-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 hover:text-blue-600 px-3 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
+                          >
+                              <Printer className="h-4 w-4" />
+                              <span className="hidden sm:inline">In Lịch Ngày</span>
+                          </button>
+                      </div>
                   </div>
               )}
           </div>
           
+          {activeTab === 'approved' && filtered.length > 0 && (
+              <div className="bg-blue-50/80 border-b border-blue-100 px-4 py-2.5 flex items-center justify-between text-xs text-blue-800">
+                  <div className="flex items-center gap-2">
+                      <span className="bg-blue-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider">Mẹo</span>
+                      <span>Bấm vào ô chọn <b>"Ca 1", "Ca 2"...</b> để chọn vị trí mổ tức thì 1-Click hoặc dùng nút mũi tên <b>▲ / ▼</b>.</span>
+                  </div>
+                  <span className="font-semibold text-blue-700 hidden md:inline">Tổng: {filtered.length} ca</span>
+              </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
                 <thead className="text-xs text-slate-500 uppercase bg-slate-50">
                     <tr>
+                        {activeTab === 'approved' && <th className="px-4 py-3 text-center w-36">STT Ca mổ</th>}
                         <th className="px-6 py-3">Bệnh nhân</th>
                         <th className="px-6 py-3">Chẩn đoán</th>
                         <th className="px-6 py-3">{activeTab==='pending' ? 'Ngày nhập' : 'Ngày mổ DK'}</th>
@@ -308,10 +500,46 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                    {loading ? <tr><td colSpan={6} className="px-6 py-12 text-center"><Loader2 className="animate-spin h-5 w-5 mx-auto text-blue-500"/></td></tr> :
-                    filtered.length === 0 ? <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-500">{activeTab==='pending' ? "Không có bệnh nhân chờ mổ" : "Chưa có lịch mổ đã duyệt"}</td></tr> :
-                    filtered.map(p => (
+                    {loading ? <tr><td colSpan={7} className="px-6 py-12 text-center"><Loader2 className="animate-spin h-5 w-5 mx-auto text-blue-500"/></td></tr> :
+                    filtered.length === 0 ? <tr><td colSpan={7} className="px-6 py-8 text-center text-slate-500">{activeTab==='pending' ? "Không có bệnh nhân chờ mổ" : "Chưa có lịch mổ đã duyệt cho ngày này"}</td></tr> :
+                    filtered.map((p, idx) => (
                         <tr key={p.id} className="bg-white hover:bg-slate-50 transition-colors">
+                            {activeTab === 'approved' && (
+                                <td className="px-3 py-3 text-center">
+                                    <div className="flex items-center justify-center gap-1.5">
+                                        <select
+                                            value={p.surgeryOrder || idx + 1}
+                                            onChange={e => handleSetSurgeryOrder(p, parseInt(e.target.value, 10))}
+                                            className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-2 py-1.5 rounded-md shadow-xs cursor-pointer outline-none transition-colors border border-blue-700"
+                                            title="Bấm để chọn nhanh thứ tự ca mổ"
+                                        >
+                                            {filtered.map((_, orderIdx) => (
+                                                <option key={orderIdx + 1} value={orderIdx + 1} className="bg-white text-slate-800 font-medium">
+                                                    Ca {orderIdx + 1}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <div className="flex flex-col gap-0.5">
+                                            <button 
+                                                onClick={() => handleSetSurgeryOrder(p, (p.surgeryOrder || idx + 1) - 1)}
+                                                disabled={idx === 0}
+                                                className="p-1 bg-slate-100 hover:bg-blue-100 hover:text-blue-700 rounded text-slate-600 disabled:opacity-20 disabled:hover:bg-slate-100 transition-colors"
+                                                title="Đẩy ca mổ này lên trước"
+                                            >
+                                                <ArrowUp className="h-3.5 w-3.5" />
+                                            </button>
+                                            <button 
+                                                onClick={() => handleSetSurgeryOrder(p, (p.surgeryOrder || idx + 1) + 1)}
+                                                disabled={idx === filtered.length - 1}
+                                                className="p-1 bg-slate-100 hover:bg-blue-100 hover:text-blue-700 rounded text-slate-600 disabled:opacity-20 disabled:hover:bg-slate-100 transition-colors"
+                                                title="Đẩy ca mổ này xuống sau"
+                                            >
+                                                <ArrowDown className="h-3.5 w-3.5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </td>
+                            )}
                             <td className="px-6 py-4">
                                 <div className="font-medium text-slate-800">{p.name}</div>
                                 <div className="text-xs text-slate-500 font-mono">{p.id} - {p.gender}</div>
@@ -438,11 +666,17 @@ export const SurgeryApproval: React.FC<Props> = ({ userRole }) => {
                   <h4 className="font-bold text-slate-700 flex items-center gap-2 text-sm uppercase">
                       <Activity className="h-4 w-4" /> Thông tin Ca mổ
                   </h4>
-                  <div className="grid grid-cols-1 gap-4">
-                      <div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div className="sm:col-span-2">
                           <label className="block text-sm font-medium text-slate-700 mb-1">Ngày mổ dự kiến <span className="text-red-500">*</span></label>
                           <input disabled={!canApprove} type="date" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-600" value={approvalData.surgeryDate} onChange={e=>setApprovalData(p => ({...p, surgeryDate: e.target.value}))} />
                       </div>
+                      <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1"><Hash className="h-3.5 w-3.5 text-blue-600" /> Thứ tự ca</label>
+                          <input disabled={!canApprove} type="number" min="1" max="99" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-600 font-bold text-blue-700" value={approvalData.surgeryOrder || 1} onChange={e=>setApprovalData(p => ({...p, surgeryOrder: parseInt(e.target.value) || 1}))} />
+                      </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4">
                       <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1">Phương pháp phẫu thuật (Dự kiến) <span className="text-red-500">*</span></label>
                           <input disabled={!canApprove} type="text" required placeholder="VD: PTNS cắt ruột thừa, Mổ mở..." className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-600" value={approvalData.surgeryMethod} onChange={e=>setApprovalData(p => ({...p, surgeryMethod: e.target.value}))} />
