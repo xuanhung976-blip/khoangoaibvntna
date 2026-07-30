@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { BarChart3, TrendingUp, Filter, Calendar, Activity, Zap, ShieldCheck, HelpCircle, Syringe, Scissors, CheckCircle2, Loader2 } from 'lucide-react';
+import { BarChart3, TrendingUp, Filter, Activity, Zap, ShieldCheck, Scissors, CheckCircle2, Loader2 } from 'lucide-react';
 import { getPatients } from '../services/dataService';
 import { Patient } from '../types';
 import { showToast } from '../components/Toast';
@@ -42,10 +42,10 @@ export const SurgeryStats: React.FC = () => {
     setLoading(true);
     try {
         const data = await getPatients();
-        // Include ALL patients who have an actual surgery date OR a surgery date.
-        setPatients(data.filter(p => {
+        // Include ALL patients who have an actual surgery date OR surgery date.
+        setPatients(data.filter((p: Patient) => {
             const dateStr = p.actualSurgeryDate || p.surgeryDate;
-            return dateStr && dateStr.trim() !== '';
+            return Boolean(dateStr && dateStr.trim() !== '');
         }));
     } catch (e) {
         showToast('Lỗi tải dữ liệu', 'error');
@@ -60,7 +60,6 @@ export const SurgeryStats: React.FC = () => {
     if (dateOnly.includes('/')) {
       const parts = dateOnly.split('/');
       if (parts.length >= 3) {
-        const d = Number(parts[0]);
         const m = Number(parts[1]);
         const y = Number(parts[2].split(' ')[0]);
         if (y > 1000 && m >= 1 && m <= 12) return { year: y, month: m };
@@ -72,9 +71,9 @@ export const SurgeryStats: React.FC = () => {
       const m = Number(parts[1]);
       if (y > 1000 && m >= 1 && m <= 12) return { year: y, month: m };
     }
-    const d = new Date(dateStr);
-    if (!isNaN(d.getTime())) {
-      return { year: d.getFullYear(), month: d.getMonth() + 1 };
+    const parsedDate = new Date(dateStr);
+    if (!isNaN(parsedDate.getTime())) {
+      return { year: parsedDate.getFullYear(), month: parsedDate.getMonth() + 1 };
     }
     return null;
   };
@@ -104,45 +103,12 @@ export const SurgeryStats: React.FC = () => {
       filteredPatients.forEach(p => {
           counts.total++;
 
-          // 1. Classification Logic (Flexible matching + Auto Inference)
-          let iType = (p.interventionType || '').toLowerCase().trim();
-          let sClass = p.surgeryClassification;
-          
-          const methodLower = (p.surgeryMethod || '').toLowerCase();
-          const diagLower = (p.diagnosis || '').toLowerCase();
-
-          // Auto infer interventionType if missing in DB
-          if (!iType) {
-              if (methodLower.includes('rfa') || diagLower.includes('rfa')) {
-                  iType = 'rfa';
-              } else if (methodLower.includes('toetva') || methodLower.includes('ngả miệng') || methodLower.includes('nội soi')) {
-                  iType = 'toetva';
-              } else if (diagLower.includes('ung thư') || diagLower.includes(' k ') || diagLower.startsWith('k ') || diagLower.endsWith(' k') || methodLower.includes(' k ') || methodLower.includes('nạo vét hạch')) {
-                  iType = 'mổ k tuyến giáp';
-              } else if (diagLower.includes('basedow')) {
-                  iType = 'basedow';
-              } else if (methodLower.includes('đốt hạch') || methodLower.includes('ets') || methodLower.includes('giao cảm')) {
-                  iType = 'ptns đốt hạch giao cảm';
-              } else if (methodLower.includes('cắt') || diagLower.includes('bướu') || diagLower.includes('giáp') || methodLower.includes('bóc nhân')) {
-                  iType = 'cắt 1 thuỳ tuyến giáp';
-              }
-          }
-
-          // Auto infer surgeryClassification if missing in DB
-          if (!sClass) {
-              if (iType.includes('toetva') || iType.includes('k tuyến giáp') || methodLower.includes('nạo vét hạch') || methodLower.includes('toàn bộ')) {
-                  sClass = 'Đặc biệt';
-              } else if (iType.includes('ets') || iType.includes('đốt hạch')) {
-                  sClass = 'Loại II';
-              } else if (iType.includes('rfa')) {
-                  sClass = ''; // RFA is thủ thuật
-              } else {
-                  sClass = 'Loại I'; // Mổ tuyến giáp thông thường
-              }
-          }
+          const iType = (p.interventionType || '').trim();
+          const sClass = (p.surgeryClassification || '').trim();
+          const iTypeUpper = iType.toUpperCase();
           
           // === THỦ THUẬT (RFA ONLY) ===
-          if (iType.includes('rfa')) {
+          if (iTypeUpper === 'RFA') {
               counts.totalProcedures++;
               // RFA is NOT included in Surgery Structure or Classification
           } 
@@ -150,20 +116,31 @@ export const SurgeryStats: React.FC = () => {
           else {
               counts.totalSurgeries++;
 
-              // Grouping using fuzzy match
-              if (iType.includes('toetva')) {
+              // Grouping using explicit stored intervention type (GAS style)
+              if (iTypeUpper === 'TOETVA') {
                   counts.groups.TOETVA++;
-              } else if (iType.includes('k tuyến giáp') || iType.includes('k giáp') || iType.includes('ung thư tuyến giáp') || iType.includes('mổ k')) {
+              } else if (
+                  iTypeUpper === 'MỔ K TUYẾN GIÁP' ||
+                  iTypeUpper === 'MỔ K' ||
+                  iTypeUpper === 'K TUYẾN GIÁP' ||
+                  iTypeUpper === 'UNG THƯ TUYẾN GIÁP'
+              ) {
                   counts.groups.KGiap++;
-              } else if (iType.includes('basedow')) {
+              } else if (iTypeUpper === 'BASEDOW') {
                   counts.groups.Basedow++;
-              } else if (iType.includes('đốt hạch') || iType.includes('ets')) {
+              } else if (
+                  iTypeUpper === 'PTNS ĐỐT HẠCH GIAO CẢM' ||
+                  iTypeUpper === 'ETS' ||
+                  iTypeUpper === 'ĐỐT HẠCH GIAO CẢM'
+              ) {
                   counts.groups.ETS++;
-              } else if (iType.includes('cắt 1 thuỳ') || iType.includes('cắt toàn bộ tuyến giáp') || iType.includes('bướu') || iType.includes('lành tính')) {
-                  // Bướu lành
+              } else if (
+                  iTypeUpper === 'CẮT 1 THUỲ TUYẾN GIÁP' ||
+                  iTypeUpper === 'CẮT TOÀN BỘ TUYẾN GIÁP' ||
+                  iTypeUpper.includes('LÀNH TÍNH')
+              ) {
                   counts.groups.LanhTinh++;
               } else {
-                  // Phẫu thuật khác
                   counts.groups.Other++;
               }
 
