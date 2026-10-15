@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Award, ChevronDown, Clock, Edit3, MessageSquare, MoreHorizontal, ShieldCheck, Sparkles, Star, Trash2, UserRound } from 'lucide-react';
-import type { StaffEvaluation, StaffTask } from '../../types';
+import { AlertTriangle, Award, ChevronDown, Clock, Edit3, MessageSquare, MoreHorizontal, Printer, ShieldCheck, Sparkles, Star, Trash2, UserRound } from 'lucide-react';
+import type { StaffEvaluation, StaffReward, StaffTask } from '../../types';
 import { fmtDate } from '../../lib/dates';
 import { matchesQuery } from '../../lib/text';
 import { cn } from '../../lib/cn';
-import { Avatar, Badge, Button, Callout, Dialog, EmptyState, Field, FormGrid, Input, Menu, Progress, SearchInput, Segmented, Select, SkeletonRows, Textarea } from '../../components/ui';
+import { printTable } from '../../lib/print';
+import { Avatar, Badge, Button, Callout, Dialog, EmptyState, Field, FormGrid, Input, Menu, Progress, SearchInput, Segmented, Select, SkeletonRows, Textarea, showToast } from '../../components/ui';
 import {
   CRITERIA_SETS,
   EVAL_STATUS,
@@ -31,6 +32,13 @@ import {
   rankFromScore,
   samePeriod,
   taskPeriodDate,
+  finalScore,
+  fmtSigned,
+  REWARD_CAP,
+  evaluationPrintModel,
+  periodSummaryPrintModel,
+  staleRewardAdjustment,
+  type RewardPeriod,
   type Criterion,
   type CriterionKey,
   type PeriodStats,
@@ -204,12 +212,34 @@ const PeriodFields: React.FC<{ draft: Partial<StaffEvaluation>; onChange: (patch
   </FormGrid>
 );
 
-const TotalLine: React.FC<{ draft: Partial<StaffEvaluation> }> = ({ draft }) => {
+const TotalLine: React.FC<{ draft: Partial<StaffEvaluation>; reward?: RewardPeriod | null }> = ({ draft, reward }) => {
   const complete = missingCriteria(draft).length === 0;
-  const score = calcScore(draft);
+  const criteriaScore = calcScore(draft);
+  const score = reward ? finalScore(criteriaScore, reward.applied) : criteriaScore;
   return (
-    <div className="flex items-center justify-between border-t border-line pt-3 text-sm">
-      <span className="text-muted">Điểm tổng (có trọng số)</span>
+    <div className="space-y-2 border-t border-line pt-3 text-sm">
+      {reward && (
+        <>
+          <div className="flex items-center justify-between">
+            <span className="text-muted">Điểm tiêu chí (có trọng số)</span>
+            <span className="num font-medium text-fg">{complete ? criteriaScore : '—'}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">
+              Thưởng / phạt kỳ này
+              <span className="ml-1 text-xs text-faint">
+                (+{reward.bonus} / −{reward.penalty} ÷ {reward.months} tháng = {reward.average}
+                {reward.applied !== Math.round(reward.average) ? `, giới hạn ±${REWARD_CAP}` : ''})
+              </span>
+            </span>
+            <span className={cn('num font-semibold', reward.applied > 0 ? 'text-blue-600 dark:text-blue-400' : reward.applied < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-faint')}>
+              {fmtSigned(reward.applied)}
+            </span>
+          </div>
+        </>
+      )}
+      <div className="flex items-center justify-between">
+      <span className="text-muted">{reward ? 'Điểm cuối' : 'Điểm tổng (có trọng số)'}</span>
       {complete ? (
         <span className="flex items-center gap-2">
           <span className="num text-xl font-semibold text-fg">{score}</span>
@@ -218,6 +248,7 @@ const TotalLine: React.FC<{ draft: Partial<StaffEvaluation> }> = ({ draft }) => 
       ) : (
         <span className="text-xs text-faint">Chấm đủ các tiêu chí để xem xếp loại</span>
       )}
+      </div>
     </div>
   );
 };
@@ -242,14 +273,15 @@ export const EvaluationDialog: React.FC<{
   today: string;
   errors: string[];
   onOpenExisting: (evaluation: StaffEvaluation) => void;
-}> = ({ draft, onChange, onClose, onSave, saving, personName, tasks, evaluations, today, errors, onOpenExisting }) => {
+  reward: RewardPeriod | null;
+}> = ({ draft, onChange, onClose, onSave, saving, personName, tasks, evaluations, today, errors, onOpenExisting, reward }) => {
   const stats = useMemo(() => (draft ? periodStats(tasks, periodRange(draft), today) : null), [draft, tasks, today]);
   if (!draft || !stats) return null;
   const patch = (value: Partial<StaffEvaluation>) => onChange({ ...draft, ...value });
   const set = criteriaSetOf(draft);
   const self = parseSelfAssessment(draft);
   const duplicate = evaluations.find(item => item.id !== draft.id && samePeriod(item, draft));
-  const score = calcScore(draft);
+  const score = finalScore(calcScore(draft), reward?.applied || 0);
   const complete = missingCriteria(draft).length === 0;
   const gap = stats.suggested === null || !isScored(draft.diemHoanThanhCongViec) ? 0 : Math.abs(Number(draft.diemHoanThanhCongViec) - stats.suggested);
   const commentRequired = complete && (isExtremeRank(rankFromScore(score)) || gap >= SUGGESTION_TOLERANCE);
@@ -322,7 +354,7 @@ export const EvaluationDialog: React.FC<{
                 suggested={criterion.key === 'diemHoanThanhCongViec' ? stats.suggested : undefined}
               />
             ))}
-            <TotalLine draft={draft} />
+            <TotalLine draft={draft} reward={reward} />
             <RankScale />
           </div>
           <Field
@@ -457,6 +489,14 @@ export const AcknowledgeDialog: React.FC<{
   );
 };
 
+/* ---------------- In ---------------- */
+
+const openPrint = (options: Parameters<typeof printTable>[0]) => {
+  if (!printTable(options)) showToast('Trình duyệt chặn cửa sổ in — hãy cho phép popup', 'error');
+};
+
+export const printEvaluation = (evaluation: StaffEvaluation, personName: string) => openPrint(evaluationPrintModel(evaluation, personName));
+
 /* ---------------- Thẻ một bản đánh giá ---------------- */
 
 export const EvaluationCard: React.FC<{
@@ -468,7 +508,10 @@ export const EvaluationCard: React.FC<{
   onDelete?: (evaluation: StaffEvaluation) => void;
   onEditSelf?: (evaluation: StaffEvaluation) => void;
   onAcknowledge?: (evaluation: StaffEvaluation) => void;
-}> = ({ evaluation, compact, canManage, isOwner, onEdit, onDelete, onEditSelf, onAcknowledge }) => {
+  onPrint?: (evaluation: StaffEvaluation) => void;
+  /** Mức thưởng/phạt hiện tại nếu đã khác lúc chấm (null = vẫn khớp). */
+  staleAdjustment?: number | null;
+}> = ({ evaluation, compact, canManage, isOwner, onEdit, onDelete, onEditSelf, onAcknowledge, onPrint, staleAdjustment = null }) => {
   const pending = isPendingEvaluation(evaluation);
   const self = parseSelfAssessment(evaluation);
   const snapshot = parsePeriodSnapshot(evaluation);
@@ -476,6 +519,7 @@ export const EvaluationCard: React.FC<{
   const menuItems = [
     ...(canManage && onEdit ? [{ label: pending ? 'Chấm điểm' : 'Sửa', icon: Edit3, onSelect: () => onEdit(evaluation) }] : []),
     ...(isOwner && pending && onEditSelf ? [{ label: 'Sửa tự đánh giá', icon: Edit3, onSelect: () => onEditSelf(evaluation) }] : []),
+    ...(!pending && onPrint ? [{ label: 'In phiếu đánh giá', icon: Printer, onSelect: () => onPrint(evaluation) }] : []),
     ...(canManage && onDelete ? [{ label: 'Xoá', icon: Trash2, danger: true, onSelect: () => onDelete(evaluation) }] : []),
   ];
 
@@ -522,6 +566,17 @@ export const EvaluationCard: React.FC<{
         })}
       </div>
 
+      {!pending && Number(evaluation.diemThuongPhat || 0) !== 0 && (
+        <p className="mt-3 text-xs text-muted">
+          Điểm tiêu chí {evaluation.diemTieuChi} · thưởng / phạt <b className={Number(evaluation.diemThuongPhat) > 0 ? 'text-blue-600' : 'text-rose-600'}>{fmtSigned(Number(evaluation.diemThuongPhat))}</b> → {evaluation.diemTong}
+        </p>
+      )}
+      {staleAdjustment !== null && (
+        <Callout tone="warning" icon={AlertTriangle} className="mt-3" title="Thưởng / phạt của kỳ đã thay đổi sau khi chấm">
+          Lúc chấm áp {fmtSigned(Number(evaluation.diemThuongPhat) || 0)}, hiện tại là {fmtSigned(staleAdjustment)}.
+          {canManage && onEdit ? ' Mở "Sửa" rồi lưu lại để cập nhật điểm cuối.' : ' Trưởng khoa sẽ cập nhật lại điểm cuối.'}
+        </Callout>
+      )}
       {snapshot && !pending && (
         <p className="mt-3 text-xs text-muted">
           Căn cứ: {snapshot.total} việc trong kỳ · {snapshot.onTime} xong đúng hạn · {snapshot.late} xong trễ · {snapshot.overdue} quá hạn
@@ -578,7 +633,10 @@ export const EvaluationsTab: React.FC<{
   onSelfAssess: () => void;
   onEditSelf: (evaluation: StaffEvaluation) => void;
   onAcknowledge: (evaluation: StaffEvaluation) => void;
-}> = ({ manager, me, users, evaluations, currentPeriod, selected, onSelect, loading, onEvaluate, onEdit, onDelete, onSelfAssess, onEditSelf, onAcknowledge }) => {
+  rewards: StaffReward[];
+  /** Người dùng hiện tại có được chấm người này không. */
+  canScoreUser: (username: string) => boolean;
+}> = ({ manager, me, users, evaluations, currentPeriod, selected, onSelect, loading, onEvaluate, onEdit, onDelete, onSelfAssess, onEditSelf, onAcknowledge, rewards, canScoreUser }) => {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<PeopleFilter>('todo');
   const nameOf = (username: string) => users.find(item => item.username === username)?.fullName || username;
@@ -601,6 +659,11 @@ export const EvaluationsTab: React.FC<{
   const target = manager ? selected : me;
   const personEvaluations = evaluations.filter(item => item.userId === target).sort(byPeriodDesc);
   const myCurrent = people.find(item => item.username === me)?.current;
+  const scoredThisPeriod = people.filter(item => item.current && !isPendingEvaluation(item.current)).length;
+  const printSummary = () => {
+    if (!scoredThisPeriod) return showToast(`Chưa có bản đánh giá nào đã chấm cho kỳ ${periodLabel(currentPeriod)}`, 'info');
+    openPrint(periodSummaryPrintModel(users, evaluations, currentPeriod));
+  };
 
   const detail = (
     <div className="min-w-0 p-4 sm:p-5">
@@ -610,7 +673,7 @@ export const EvaluationsTab: React.FC<{
         <EmptyState icon={UserRound} title="Chọn nhân viên để xem đánh giá" />
       ) : (
         <div className="space-y-4">
-          {!manager && !myCurrent && (
+          {(!manager || !canScoreUser(me)) && target === me && !myCurrent && (
             <Callout
               tone="info"
               icon={Award}
@@ -628,9 +691,13 @@ export const EvaluationsTab: React.FC<{
             <div className="flex flex-wrap items-center gap-2">
               <Avatar name={nameOf(target)} size="sm" />
               <p className="font-semibold text-fg">{nameOf(target)}</p>
-              <Button size="sm" variant="soft" icon={Award} className="ml-auto" onClick={() => onEvaluate(target)}>
-                Đánh giá kỳ {periodLabel(currentPeriod)}
-              </Button>
+              {canScoreUser(target) ? (
+                <Button size="sm" variant="soft" icon={Award} className="ml-auto" onClick={() => onEvaluate(target)}>
+                  Đánh giá kỳ {periodLabel(currentPeriod)}
+                </Button>
+              ) : (
+                <span className="ml-auto text-xs text-muted">Bản của bạn do trưởng khoa chấm</span>
+              )}
             </div>
           )}
           {personEvaluations.length === 0 ? (
@@ -640,8 +707,10 @@ export const EvaluationsTab: React.FC<{
               <EvaluationCard
                 key={evaluation.id}
                 evaluation={evaluation}
-                canManage={manager}
+                canManage={manager && canScoreUser(evaluation.userId)}
                 isOwner={evaluation.userId === me}
+                onPrint={item => printEvaluation(item, nameOf(item.userId))}
+                staleAdjustment={staleRewardAdjustment(evaluation, rewards)}
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onEditSelf={onEditSelf}
@@ -660,7 +729,10 @@ export const EvaluationsTab: React.FC<{
     <div className="grid grid-cols-1 md:grid-cols-[300px_1fr]">
       <div className="border-b border-line md:border-b-0 md:border-r">
         <div className="space-y-2 p-3">
-          <SearchInput value={search} onChange={setSearch} placeholder="Tìm nhân viên…" />
+          <div className="flex items-center gap-2">
+            <SearchInput value={search} onChange={setSearch} placeholder="Tìm nhân viên…" className="min-w-0 flex-1" />
+            <Button size="md" variant="ghost" iconOnly icon={Printer} onClick={printSummary} aria-label={`In bảng tổng hợp xếp loại ${periodLabel(currentPeriod)}`} title={`In bảng tổng hợp xếp loại ${periodLabel(currentPeriod)} (${scoredThisPeriod} đã chấm)`} />
+          </div>
           <Segmented<PeopleFilter>
             size="sm"
             value={filter}

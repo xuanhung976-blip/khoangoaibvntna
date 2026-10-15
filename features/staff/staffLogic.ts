@@ -1,4 +1,4 @@
-import { STAFF_EVALUATION_TYPES, STAFF_TASK_PRIORITIES, STAFF_TASK_STATUSES, type StaffEvaluation, type StaffTask } from '../../types';
+import { STAFF_EVALUATION_TYPES, STAFF_TASK_PRIORITIES, STAFF_TASK_STATUSES, type StaffEvaluation, type StaffReward, type StaffTask } from '../../types';
 import { toDateKey } from '../../lib/dates';
 import { clamp, toNumber } from '../../lib/text';
 
@@ -179,6 +179,8 @@ export const normalizeEvaluation = (evaluation: Partial<StaffEvaluation>): Staff
     trangThai: String(evaluation.trangThai || EVAL_STATUS.evaluated),
     ngayXacNhan: toDateKey(evaluation.ngayXacNhan) || String(evaluation.ngayXacNhan || ''),
     yKienNhanVien: String(evaluation.yKienNhanVien || ''),
+    diemTieuChi: isScored(evaluation.diemTieuChi) ? pct(evaluation.diemTieuChi) : '',
+    diemThuongPhat: isScored(evaluation.diemThuongPhat) ? toNumber(evaluation.diemThuongPhat) : '',
   };
   if (isPendingEvaluation(base)) return { ...base, diemTong: 0, xepLoai: '' };
   const score = toNumber(base.diemTong) || calcScore(base);
@@ -267,16 +269,306 @@ export const periodStats = (tasks: StaffTask[], period: { from: string; to: stri
 export const SUGGESTION_TOLERANCE = 15;
 
 /** Các lỗi cần sửa trước khi trưởng khoa lưu bản đánh giá. */
-export const validateEvaluation = (item: Partial<StaffEvaluation>, suggested: number | null): string[] => {
+export const validateEvaluation = (item: Partial<StaffEvaluation>, suggested: number | null, adjustment = 0): string[] => {
   const missing = missingCriteria(item);
   if (missing.length) return [`Chưa chấm: ${missing.map(criterion => criterion.label).join(', ')}`];
   if (String(item.nhanXet || '').trim()) return [];
   const errors: string[] = [];
-  const rank = rankFromScore(calcScore(item));
+  const rank = rankFromScore(finalScore(calcScore(item), adjustment));
   if (isExtremeRank(rank)) errors.push(`Xếp loại "${rank}" cần có nhận xét làm căn cứ`);
   const gap = suggested === null ? 0 : Math.abs(pct(item.diemHoanThanhCongViec) - suggested);
   if (gap >= SUGGESTION_TOLERANCE) errors.push(`Điểm "Hoàn thành công việc" lệch ${gap} điểm so với số liệu (${suggested}), cần ghi lý do vào nhận xét`);
   return errors;
+};
+
+/* ---------------- Thưởng / phạt ---------------- */
+
+export const REWARD_TYPES = ['Thưởng', 'Phạt'] as const;
+
+/** Mức cộng trừ tối đa mỗi kỳ (theo TB tháng) để thưởng/phạt không lấn át các tiêu chí. */
+export const REWARD_CAP = 15;
+
+/** Mức điểm gợi ý (thang tháng). Vẫn nhập được số tự do. */
+export const REWARD_PRESETS: Record<StaffReward['loai'], Array<{ diem: number; lyDo: string }>> = {
+  Thưởng: [
+    { diem: 5, lyDo: 'Sáng kiến, cải tiến được áp dụng' },
+    { diem: 3, lyDo: 'Được người bệnh / gia đình khen' },
+    { diem: 2, lyDo: 'Hỗ trợ, làm thay đột xuất' },
+  ],
+  Phạt: [
+    { diem: 2, lyDo: 'Đi trễ, về sớm' },
+    { diem: 3, lyDo: 'Sai sót hồ sơ, thủ tục' },
+    { diem: 5, lyDo: 'Bị người bệnh phản ánh có căn cứ' },
+  ],
+};
+
+export const normalizeReward = (reward: Partial<StaffReward>): StaffReward => ({
+  id: String(reward.id || ''),
+  userId: String(reward.userId || ''),
+  ngay: toDateKey(reward.ngay) || String(reward.ngay || ''),
+  loai: reward.loai === 'Phạt' ? 'Phạt' : 'Thưởng',
+  diem: Math.abs(toNumber(reward.diem)),
+  lyDo: String(reward.lyDo || ''),
+  nguoiGhi: String(reward.nguoiGhi || ''),
+  ngayGhi: toDateKey(reward.ngayGhi) || String(reward.ngayGhi || ''),
+});
+
+export type RewardTotals = { bonus: number; penalty: number; net: number; count: number };
+const emptyTotals = (): RewardTotals => ({ bonus: 0, penalty: 0, net: 0, count: 0 });
+
+const addReward = (totals: RewardTotals, reward: StaffReward) => {
+  const points = toNumber(reward.diem);
+  if (reward.loai === 'Phạt') totals.penalty += points;
+  else totals.bonus += points;
+  totals.net = totals.bonus - totals.penalty;
+  totals.count += 1;
+  return totals;
+};
+
+export const rewardsOf = (rewards: StaffReward[], userId: string, from: string, to: string) =>
+  rewards.filter(reward => reward.userId === userId && reward.ngay >= from && reward.ngay <= to);
+
+/** Tổng thưởng / phạt từng tháng (index 0 = tháng 1) của một người trong năm. */
+export const rewardMonths = (rewards: StaffReward[], userId: string, year: number): RewardTotals[] => {
+  const months = Array.from({ length: 12 }, emptyTotals);
+  rewardsOf(rewards, userId, `${year}-01-01`, `${year}-12-31`).forEach(reward => {
+    const month = Number(reward.ngay.slice(5, 7));
+    if (month >= 1 && month <= 12) addReward(months[month - 1], reward);
+  });
+  return months;
+};
+
+export type RewardPeriod = RewardTotals & {
+  months: number;
+  /** TB (thưởng − phạt) mỗi tháng của kỳ, chia đủ số tháng kể cả tháng không phát sinh. */
+  average: number;
+  /** Mức áp vào điểm tổng: TB tháng làm tròn, giới hạn ±REWARD_CAP. */
+  applied: number;
+};
+
+export const rewardPeriod = (rewards: StaffReward[], userId: string, period: Pick<Partial<StaffEvaluation>, 'loaiDanhGia' | 'quy' | 'nam'>): RewardPeriod => {
+  const range = periodRange(period);
+  const totals = rewardsOf(rewards, userId, range.from, range.to).reduce(addReward, emptyTotals());
+  const months = period.loaiDanhGia === 'Năm' ? 12 : 3;
+  const average = Math.round((totals.net / months) * 10) / 10;
+  return { ...totals, months, average, applied: clamp(Math.round(average), -REWARD_CAP, REWARD_CAP) };
+};
+
+/** Điểm cuối = điểm tiêu chí + mức thưởng/phạt, giữ trong 0–100. */
+export const finalScore = (criteriaScore: number, adjustment: number) => clamp(criteriaScore + adjustment, 0, 100);
+
+export const fmtSigned = (value: number) => (value > 0 ? `+${value}` : value < 0 ? `−${Math.abs(value)}` : '0');
+
+/**
+ * Thưởng/phạt của kỳ đã thay đổi sau lúc chấm (ghi thêm, sửa hoặc xoá): điểm cuối đã lưu không còn khớp.
+ * Trả về mức áp dụng hiện tại, hoặc null nếu vẫn khớp / bản đang chờ chấm.
+ */
+export const staleRewardAdjustment = (evaluation: StaffEvaluation, rewards: StaffReward[]): number | null => {
+  if (isPendingEvaluation(evaluation)) return null;
+  const current = rewardPeriod(rewards, evaluation.userId, evaluation).applied;
+  return current === toNumber(evaluation.diemThuongPhat) ? null : current;
+};
+
+/* ---------------- Mẫu in ---------------- */
+
+const fmtPoint = (value: number) => String(Math.round(value * 10) / 10).replace('.', ',');
+
+/** Phiếu đánh giá cá nhân: bảng tiêu chí (tự chấm, trưởng khoa chấm, điểm quy đổi) + dòng tổng. */
+export const evaluationPrintModel = (evaluation: StaffEvaluation, personName: string) => {
+  const self = parseSelfAssessment(evaluation);
+  const snapshot = parsePeriodSnapshot(evaluation);
+  const criteria = criteriaOf(evaluation);
+  const criteriaScore = isScored(evaluation.diemTieuChi) ? toNumber(evaluation.diemTieuChi) : calcScore(evaluation);
+  const adjustment = toNumber(evaluation.diemThuongPhat);
+  const set = criteriaSetOf(evaluation);
+  const rows: Array<Array<string | number>> = criteria.map((criterion, index) => {
+    const score = pct(evaluation[criterion.key]);
+    const selfScore = self?.scores[criterion.key];
+    return [index + 1, criterion.label, `${criterion.weight}%`, selfScore ?? '', score, fmtPoint((score * criterion.weight) / 100)];
+  });
+  rows.push(['', 'Điểm tiêu chí (có trọng số)', '100%', '', '', criteriaScore]);
+  if (adjustment) rows.push(['', 'Thưởng / phạt trong kỳ (TB tháng)', '', '', '', fmtSigned(adjustment)]);
+  rows.push(['', 'ĐIỂM CUỐI — XẾP LOẠI', '', '', '', `${evaluation.diemTong} — ${evaluation.xepLoai}`]);
+
+  const intro = [
+    `Họ và tên: ${personName}${set !== 'LEGACY' ? `          Nhóm: ${GROUP_LABEL[set]}` : ''}`,
+    snapshot
+      ? `Căn cứ số liệu công việc (${snapshot.from.split('-').reverse().join('/')} – ${snapshot.to.split('-').reverse().join('/')}): ${snapshot.total} việc được giao; ${snapshot.onTime} xong đúng hạn; ${snapshot.late} xong trễ; ${snapshot.overdue} quá hạn${snapshot.suggested !== null ? `; điểm gợi ý ${snapshot.suggested}` : ''}.`
+      : '',
+    evaluation.nhanXet ? `Nhận xét của người đánh giá: ${evaluation.nhanXet}` : '',
+    self?.nhanXet ? `Ý kiến tự đánh giá: ${self.nhanXet}` : '',
+    evaluation.yKienNhanVien ? `Ý kiến phản hồi của nhân viên: ${evaluation.yKienNhanVien}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return {
+    title: 'Phiếu đánh giá, xếp loại nhân viên',
+    subtitle: `Kỳ ${periodLabel(evaluation)}`,
+    intro,
+    columns: [
+      { label: 'STT', width: '6%', align: 'center' as const },
+      { label: 'Tiêu chí', width: '44%' },
+      { label: 'Trọng số', width: '10%', align: 'center' as const },
+      { label: 'Tự chấm', width: '10%', align: 'center' as const },
+      { label: 'Người đánh giá chấm', width: '14%', align: 'center' as const },
+      { label: 'Điểm quy đổi', width: '16%', align: 'center' as const },
+    ],
+    rows,
+    signers: ['NHÂN VIÊN', 'NGƯỜI ĐÁNH GIÁ'],
+    signerName: evaluation.nguoiDanhGia,
+    landscape: false,
+  };
+};
+
+/** Bảng tổng hợp xếp loại toàn khoa cho một kỳ (chỉ bản đã chấm), sắp xếp điểm cuối giảm dần. */
+export const periodSummaryPrintModel = (
+  users: Array<{ username: string; fullName: string }>,
+  evaluations: StaffEvaluation[],
+  period: Partial<StaffEvaluation>,
+) => {
+  const scored = users
+    .map(user => ({ user, evaluation: evaluations.find(item => samePeriod(item, { ...period, userId: user.username }) && !isPendingEvaluation(item)) }))
+    .filter((item): item is { user: { username: string; fullName: string }; evaluation: StaffEvaluation } => Boolean(item.evaluation))
+    .sort((a, b) => toNumber(b.evaluation.diemTong) - toNumber(a.evaluation.diemTong) || a.user.fullName.localeCompare(b.user.fullName, 'vi'));
+  const missing = users.length - scored.length;
+  // Đếm theo thang hiện hành, kèm các xếp loại thang cũ nếu kỳ đó còn bản chấm theo thang cũ.
+  const labels = [...new Set([...RANKS.map(rank => rank.label as string), ...scored.map(item => item.evaluation.xepLoai).filter(Boolean)])];
+  const counts = labels.map(label => `${label}: ${scored.filter(item => item.evaluation.xepLoai === label).length}`).join('; ');
+  return {
+    title: 'Bảng tổng hợp đánh giá, xếp loại nhân viên',
+    subtitle: `Kỳ ${periodLabel(period)}`,
+    intro: `Đã đánh giá ${scored.length}/${users.length} nhân viên${missing ? ` (còn ${missing} chưa chấm)` : ''}. ${counts}.`,
+    columns: [
+      { label: 'STT', width: '5%', align: 'center' as const },
+      { label: 'Họ và tên', width: '23%' },
+      { label: 'Nhóm', width: '10%', align: 'center' as const },
+      { label: 'Điểm tiêu chí', width: '10%', align: 'center' as const },
+      { label: 'Thưởng / phạt', width: '9%', align: 'center' as const },
+      { label: 'Điểm cuối', width: '9%', align: 'center' as const },
+      { label: 'Xếp loại', width: '17%', align: 'center' as const },
+      { label: 'Nhân viên xác nhận', width: '17%', align: 'center' as const },
+    ],
+    rows: scored.map(({ user, evaluation }, index) => {
+      const set = criteriaSetOf(evaluation);
+      return [
+        index + 1,
+        user.fullName || user.username,
+        set === 'LEGACY' ? '' : GROUP_LABEL[set],
+        isScored(evaluation.diemTieuChi) ? toNumber(evaluation.diemTieuChi) : evaluation.diemTong,
+        toNumber(evaluation.diemThuongPhat) ? fmtSigned(toNumber(evaluation.diemThuongPhat)) : '',
+        evaluation.diemTong,
+        evaluation.xepLoai,
+        evaluation.trangThai === EVAL_STATUS.acknowledged
+          ? ['Đã xác nhận', String(evaluation.ngayXacNhan || '').split('-').reverse().join('/')].filter(Boolean).join(' ')
+          : 'Chưa xác nhận',
+      ];
+    }),
+    signers: ['NGƯỜI LẬP BẢNG', 'TRƯỞNG KHOA'],
+    landscape: false,
+  };
+};
+
+/** Người quản lý có được chấm / ghi thưởng phạt cho người này không (ĐD trưởng không tự chấm mình). */
+export const canScore = (actor: { username: string; chief: boolean; manager: boolean }, target: string) =>
+  actor.chief || (actor.manager && Boolean(target) && target !== actor.username);
+
+/* ---------------- So sánh nhân viên theo kỳ ---------------- */
+
+export type CompareKind = 'month' | 'quarter' | 'year';
+export type ComparePeriod = { kind: CompareKind; year: number; month: number; quarter: number };
+
+/** Kỳ mặc định: như form đánh giá — tháng đầu quý thì xem quý vừa kết thúc (quý mới còn ít số liệu). */
+export const comparePeriodOf = (today: string, kind: CompareKind = 'quarter'): ComparePeriod => {
+  const month = Number(today.slice(5, 7));
+  const year = Number(today.slice(0, 4));
+  if (kind === 'quarter' && (month - 1) % 3 === 0) {
+    const quarter = Math.ceil(month / 3) - 1;
+    return quarter ? { kind, year, month, quarter } : { kind, year: year - 1, month, quarter: 4 };
+  }
+  return { kind, year, month, quarter: Math.ceil(month / 3) };
+};
+
+/** Khoảng ngày, số tháng để chia TB thưởng/phạt, và kỳ đánh giá tương ứng (tháng → quý chứa tháng đó). */
+export const compareBounds = (period: ComparePeriod) => {
+  const { kind, year, month, quarter } = period;
+  if (kind === 'month') {
+    const last = new Date(year, month, 0).getDate();
+    return {
+      from: `${year}-${String(month).padStart(2, '0')}-01`,
+      to: `${year}-${String(month).padStart(2, '0')}-${last}`,
+      months: 1,
+      label: `Tháng ${month}/${year}`,
+      evalPeriod: { loaiDanhGia: 'Quý', quy: `Q${Math.ceil(month / 3)}`, nam: year } as Partial<StaffEvaluation>,
+    };
+  }
+  const evalPeriod: Partial<StaffEvaluation> = kind === 'year' ? { loaiDanhGia: 'Năm', nam: year } : { loaiDanhGia: 'Quý', quy: `Q${quarter}`, nam: year };
+  return { ...periodRange(evalPeriod), months: kind === 'year' ? 12 : 3, label: periodLabel(evalPeriod), evalPeriod };
+};
+
+export type CompareRow = {
+  username: string;
+  fullName: string;
+  group: StaffGroup;
+  assigned: number;
+  done: number;
+  onTime: number;
+  late: number;
+  overdue: number;
+  /** % xong đúng hạn trên số việc đã xong hoặc quá hạn; null nếu chưa có việc để tính. */
+  onTimeRate: number | null;
+  suggested: number | null;
+  bonus: number;
+  penalty: number;
+  /** TB (thưởng − phạt) mỗi tháng của kỳ. */
+  rewardAvg: number;
+  criteria: number | null;
+  final: number | null;
+  rank: string;
+  evalLabel: string;
+};
+
+export const compareStaff = (
+  users: Array<{ username: string; fullName: string }>,
+  tasks: StaffTask[],
+  evaluations: StaffEvaluation[],
+  rewards: StaffReward[],
+  period: ComparePeriod,
+  today: string,
+): CompareRow[] => {
+  const bounds = compareBounds(period);
+  return users.map(user => {
+    const mine = tasks.filter(task => task.userId === user.username || task.assigneeUsername === user.username);
+    const stats = periodStats(mine, bounds, today);
+    const reward = rewardsOf(rewards, user.username, bounds.from, bounds.to).reduce(addReward, emptyTotals());
+    const evaluation = evaluations.find(item => samePeriod(item, { ...bounds.evalPeriod, userId: user.username }));
+    const scored = evaluation && !isPendingEvaluation(evaluation) ? evaluation : null;
+    return {
+      username: user.username,
+      fullName: user.fullName || user.username,
+      group: guessGroup(user.username, user.fullName || ''),
+      assigned: stats.total,
+      done: stats.done,
+      onTime: stats.onTime,
+      late: stats.late,
+      overdue: stats.overdue,
+      onTimeRate: stats.assessed ? Math.round((stats.onTime / stats.assessed) * 100) : null,
+      suggested: stats.suggested,
+      bonus: reward.bonus,
+      penalty: reward.penalty,
+      rewardAvg: Math.round((reward.net / bounds.months) * 10) / 10,
+      criteria: scored ? toNumber(scored.diemTieuChi) || toNumber(scored.diemTong) : null,
+      final: scored ? toNumber(scored.diemTong) : null,
+      rank: scored?.xepLoai || '',
+      evalLabel: scored ? periodLabel(scored) : evaluation ? 'Chờ chấm' : 'Chưa chấm',
+    };
+  });
+};
+
+/** TB của các giá trị khác null (làm tròn 1 chữ số); null nếu không có. */
+export const meanOf = (values: Array<number | null>) => {
+  const list = values.filter((value): value is number => value !== null);
+  return list.length ? Math.round((list.reduce((sum, value) => sum + value, 0) / list.length) * 10) / 10 : null;
 };
 
 /* ---------------- Tổng quan toàn khoa ---------------- */
@@ -308,6 +600,10 @@ export type StaffSummary = {
   latestScore: number | null;
   latestRank: string;
   latestPeriod: string;
+  /** Thưởng / phạt trong tháng hiện tại. */
+  rewardMonth: RewardTotals;
+  /** Thưởng / phạt của quý hiện tại (TB tháng, mức áp vào đánh giá). */
+  rewardQuarter: RewardPeriod;
   /** Mức tải: 'over' nếu có việc quá hạn hoặc ≥ 5 việc mở; 'busy' 3-4; 'ok'; 'idle' không có việc mở. */
   load: 'over' | 'busy' | 'ok' | 'idle';
   tasks: StaffTask[];
@@ -320,7 +616,10 @@ export const summarizeStaff = (
   tasks: StaffTask[],
   evaluations: StaffEvaluation[],
   today: string,
+  rewards: StaffReward[] = [],
 ): { people: StaffSummary[]; unassigned: StaffTask[] } => {
+  const monthFrom = `${today.slice(0, 7)}-01`;
+  const quarter: Partial<StaffEvaluation> = { loaiDanhGia: 'Quý', quy: `Q${Math.ceil(Number(today.slice(5, 7)) / 3)}`, nam: Number(today.slice(0, 4)) };
   const soon = (() => {
     const date = new Date(`${today}T12:00:00`);
     date.setDate(date.getDate() + DUE_SOON_DAYS);
@@ -360,6 +659,8 @@ export const summarizeStaff = (
       latestScore: latest ? toNumber(latest.diemTong) : null,
       latestRank: latest?.xepLoai || '',
       latestPeriod: latest ? periodLabel(latest) : '',
+      rewardMonth: rewardsOf(rewards, user.username, monthFrom, today).reduce(addReward, emptyTotals()),
+      rewardQuarter: rewardPeriod(rewards, user.username, quarter),
       load: overdue.length > 0 || openActive >= 5 ? 'over' : openActive >= 3 ? 'busy' : openActive > 0 ? 'ok' : 'idle',
       tasks: mine,
     } as StaffSummary;

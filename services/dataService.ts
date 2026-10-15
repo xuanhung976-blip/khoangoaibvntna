@@ -17,6 +17,7 @@ import {
     SystemConfig,
     RolePermission,
     StaffEvaluation,
+    StaffReward,
     Role,
     LoginResult,
     StaffTask,
@@ -532,6 +533,13 @@ export const updateStaffEvaluation = (id: string, evaluation: Partial<StaffEvalu
     saveGenericData('DanhGia_NhanVien', { ...evaluation, id });
 export const deleteStaffEvaluation = (id: string) =>
     deleteGenericData('DanhGia_NhanVien', id);
+
+export const getStaffRewards = (options?: ReadOptions): Promise<StaffReward[]> =>
+    getGenericData('ThuongPhat_NhanVien', options);
+export const saveStaffReward = (reward: StaffReward) =>
+    saveGenericData('ThuongPhat_NhanVien', reward);
+export const deleteStaffReward = (id: string) =>
+    deleteGenericData('ThuongPhat_NhanVien', id);
 
 // DASHBOARD
 export const getDashboardStats = () =>

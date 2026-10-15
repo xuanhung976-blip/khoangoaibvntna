@@ -1,13 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Award, CheckCircle2, ClipboardCheck, ClipboardList, Edit3, LayoutDashboard, MoreHorizontal, Plus, RefreshCw, Trash2, UserRound } from 'lucide-react';
-import { STAFF_TASK_PRIORITIES, STAFF_TASK_STATUSES, type StaffEvaluation, type StaffTask } from '../../types';
+import { Award, CheckCircle2, Gift, ClipboardCheck, ClipboardList, Edit3, LayoutDashboard, MoreHorizontal, Plus, RefreshCw, Trash2, UserRound } from 'lucide-react';
+import { STAFF_TASK_PRIORITIES, STAFF_TASK_STATUSES, type StaffEvaluation, type StaffReward, type StaffTask } from '../../types';
 import {
   addStaffEvaluation,
   addStaffTask,
   deleteStaffEvaluation,
   deleteStaffTask,
   getStaffEvaluations,
+  getStaffRewards,
+  saveStaffReward,
+  deleteStaffReward,
   getStaffTasks,
   updateStaffEvaluation,
   updateStaffTask,
@@ -49,6 +52,7 @@ import {
 import {
   EVAL_STATUS,
   calcScore,
+  canScore,
   criteriaOf,
   guessGroup,
   isBriefingTask,
@@ -56,6 +60,9 @@ import {
   isOverdue,
   isPendingEvaluation,
   normalizeEvaluation,
+  normalizeReward,
+  finalScore,
+  rewardPeriod,
   normalizeTask,
   parseSelfAssessment,
   periodLabel,
@@ -69,8 +76,9 @@ import {
 } from './staffLogic';
 import { StaffOverview, StaffPersonDrawer } from './StaffOverview';
 import { AcknowledgeDialog, EvaluationDialog, EvaluationsTab, SelfAssessmentDialog } from './StaffEvaluations';
+import { RewardDialog, RewardDrawer, RewardsTab, type RewardScope } from './StaffRewards';
 
-type Tab = 'overview' | 'mine' | 'all' | 'evaluations';
+type Tab = 'overview' | 'mine' | 'all' | 'evaluations' | 'rewards';
 type Filter = 'open' | 'overdue' | 'done' | 'all';
 
 const STATUS_TONE: Record<string, 'neutral' | 'info' | 'success' | 'warning'> = {
@@ -88,6 +96,7 @@ export const StaffPage: React.FC = () => {
   const today = todayKey();
   const tasksRes = useResource<StaffTask[]>(KEYS.staffTasks, async options => ((await getStaffTasks(options)) || []).map(normalizeTask));
   const evalRes = useResource<StaffEvaluation[]>(KEYS.staffEvaluations, async options => ((await getStaffEvaluations(options)) || []).map(normalizeEvaluation));
+  const rewardsRes = useResource<StaffReward[]>(KEYS.staffRewards, async options => ((await getStaffRewards(options)) || []).map(normalizeReward));
   const { users } = useDirectory();
   const { run, pending } = useAction();
 
@@ -103,6 +112,9 @@ export const StaffPage: React.FC = () => {
   const [selfDraft, setSelfDraft] = useState<Partial<StaffEvaluation> | null>(null);
   const [selfErrors, setSelfErrors] = useState<string[]>([]);
   const [acknowledging, setAcknowledging] = useState<StaffEvaluation | null>(null);
+  const [rewardYear, setRewardYear] = useState(() => Number(todayKey().slice(0, 4)));
+  const [rewardScope, setRewardScope] = useState<RewardScope | null>(null);
+  const [rewardDraft, setRewardDraft] = useState<Partial<StaffReward> | null>(null);
 
   const tasks = useMemo(() => tasksRes.data || [], [tasksRes.data]);
   const evaluations = useMemo(() => evalRes.data || [], [evalRes.data]);
@@ -208,16 +220,19 @@ export const StaffPage: React.FC = () => {
     return { loaiDanhGia: 'Quý', quy: `Q${quarter}`, nam: year };
   }, [today]);
 
+  const canScoreUser = (username: string) => canScore({ username: user.username, chief, manager }, username);
   const selectedEvalUser = evalPerson || users[0]?.username || '';
   const tasksOf = (username = '') => tasks.filter(task => task.userId === username || task.assigneeUsername === username);
   const blankScores: Partial<StaffEvaluation> = { diemHoanThanhCongViec: '', diemChuyenMon: '', diemThaiDo: '', diemKyLuat: '', diemPhoiHop: '', diemSangKien: '' };
 
   const openEvaluation = (evaluation: StaffEvaluation) => {
+    if (!canScoreUser(evaluation.userId)) return showToast('Bản đánh giá của bạn do trưởng khoa chấm', 'info');
     setEvalErrors([]);
     setEditingEval(isPendingEvaluation(evaluation) ? { ...evaluation, ...blankScores } : evaluation);
   };
 
   const startEvaluation = (username: string) => {
+    if (!canScoreUser(username)) return showToast('Bản đánh giá của bạn do trưởng khoa chấm', 'info');
     const existing = evaluations.find(item => samePeriod(item, { ...currentPeriod, userId: username }));
     if (existing) return openEvaluation(existing);
     setEvalErrors([]);
@@ -227,7 +242,8 @@ export const StaffPage: React.FC = () => {
   const saveEvaluation = async () => {
     if (!editingEval) return;
     const stats = periodStats(tasksOf(editingEval.userId), periodRange(editingEval), today);
-    const errors = validateEvaluation(editingEval, stats.suggested);
+    const reward = rewardPeriod(rewards, editingEval.userId || '', editingEval);
+    const errors = validateEvaluation(editingEval, stats.suggested, reward.applied);
     if (evaluations.some(item => item.id !== editingEval.id && samePeriod(item, editingEval))) errors.push(`Kỳ ${periodLabel(editingEval)} đã có bản đánh giá`);
     setEvalErrors(errors);
     if (errors.length) return showToast(errors[0], 'warning');
@@ -238,11 +254,15 @@ export const StaffPage: React.FC = () => {
     const keepAck =
       previous?.trangThai === EVAL_STATUS.acknowledged &&
       criteriaOf(previous).every(criterion => Number(previous[criterion.key]) === Number(editingEval[criterion.key])) &&
-      previous.nhanXet === editingEval.nhanXet;
-    const score = calcScore(editingEval);
+      previous.nhanXet === editingEval.nhanXet &&
+      Number(previous.diemThuongPhat || 0) === reward.applied;
+    const criteriaScore = calcScore(editingEval);
+    const score = finalScore(criteriaScore, reward.applied);
     const payload = normalizeEvaluation({
       ...editingEval,
       ...scores,
+      diemTieuChi: criteriaScore,
+      diemThuongPhat: reward.applied,
       diemTong: score,
       xepLoai: rankFromScore(score),
       diemGoiY: stats.suggested ?? '',
@@ -310,7 +330,30 @@ export const StaffPage: React.FC = () => {
 
   // Số liệu toàn khoa chỉ tính nhân sự: bỏ việc giao cho tài khoản quản trị.
   const staffTasks = useMemo(() => tasks.filter(task => !isAdminAccount({ username: task.assigneeUsername || task.userId })), [tasks]);
-  const overview = useMemo(() => summarizeStaff(users, staffTasks, evaluations, today), [users, staffTasks, evaluations, today]);
+  const rewards = useMemo(() => rewardsRes.data || [], [rewardsRes.data]);
+  const overview = useMemo(() => summarizeStaff(users, staffTasks, evaluations, today, rewards), [users, staffTasks, evaluations, today, rewards]);
+
+  /* -------- Thưởng / phạt -------- */
+  const startReward = (username = '', date = today) =>
+    setRewardDraft({ userId: username, ngay: date, loai: 'Thưởng', diem: '', lyDo: '' });
+
+  const saveReward = async () => {
+    if (!rewardDraft) return;
+    if (!rewardDraft.userId) return showToast('Chọn nhân viên', 'warning');
+    if (!canScoreUser(rewardDraft.userId)) return showToast('Không tự ghi thưởng / phạt cho chính mình', 'warning');
+    if (!rewardDraft.ngay) return showToast('Chọn ngày', 'warning');
+    if (!(Number(rewardDraft.diem) > 0)) return showToast('Nhập số điểm lớn hơn 0', 'warning');
+    if (!String(rewardDraft.lyDo || '').trim()) return showToast('Thưởng / phạt cần ghi lý do', 'warning');
+    const payload = normalizeReward({ ...rewardDraft, lyDo: String(rewardDraft.lyDo).trim(), nguoiGhi: user.fullName || user.username, ngayGhi: today });
+    const result = await run('save-reward', () => saveStaffReward(payload), { success: `Đã ghi ${payload.loai.toLowerCase()} ${payload.diem} điểm`, invalidate: [KEYS.staffRewards] });
+    if (result !== undefined) setRewardDraft(null);
+  };
+
+  const removeReward = async (reward: StaffReward) => {
+    const ok = await confirmAction({ title: `Xoá ${reward.loai.toLowerCase()} ${reward.diem} điểm?`, message: `${nameOf(reward.userId)} · ${reward.lyDo}`, confirmText: 'Xoá' });
+    if (!ok) return;
+    await run('delete-reward', () => deleteStaffReward(reward.id), { success: 'Đã xoá', invalidate: [KEYS.staffRewards] });
+  };
   const viewedSummary = viewingPerson ? overview.people.find(item => item.username === viewingPerson) || null : null;
 
   const newTask = (forUser?: string): Partial<StaffTask> => ({
@@ -325,9 +368,10 @@ export const StaffPage: React.FC = () => {
     tienDo: 0,
   });
 
-  const loading = tab === 'evaluations' ? evalRes.loading : tasksRes.loading;
+  const activeRes = tab === 'evaluations' ? evalRes : tab === 'rewards' ? rewardsRes : tasksRes;
+  const loading = activeRes.loading;
   const overviewLoading = tasksRes.loading || (!users.length && !tasksRes.error);
-  const activeError = tab === 'evaluations' ? evalRes.error : tasksRes.error;
+  const activeError = activeRes.error;
 
   return (
     <div className="space-y-5">
@@ -337,10 +381,16 @@ export const StaffPage: React.FC = () => {
         description="Theo dõi việc được giao (kể cả từ giao ban) và đánh giá nhân viên định kỳ"
         actions={
           <>
-            <Button variant="ghost" iconOnly icon={RefreshCw} loading={tasksRes.validating || evalRes.validating} onClick={() => (tab === 'evaluations' ? evalRes.reload() : tasksRes.reload())} aria-label="Làm mới" />
-            {tab === 'evaluations' ? (
+            <Button variant="ghost" iconOnly icon={RefreshCw} loading={activeRes.validating} onClick={() => activeRes.reload()} aria-label="Làm mới" />
+            {tab === 'rewards' ? (
               manager ? (
-                <Button variant="primary" icon={Plus} disabled={!selectedEvalUser} onClick={() => startEvaluation(selectedEvalUser)}>
+                <Button variant="primary" icon={Gift} onClick={() => startReward()}>
+                  Ghi thưởng / phạt
+                </Button>
+              ) : null
+            ) : tab === 'evaluations' ? (
+              manager ? (
+                <Button variant="primary" icon={Plus} disabled={!canScoreUser(selectedEvalUser)} onClick={() => startEvaluation(selectedEvalUser)}>
                   Đánh giá {periodLabel(currentPeriod)}
                 </Button>
               ) : (
@@ -367,12 +417,13 @@ export const StaffPage: React.FC = () => {
               { value: 'mine', label: 'Việc của tôi', icon: UserRound, count: tasks.filter(task => mine(task) && !isDone(task)).length, countTone: 'primary' },
               { value: 'all', label: 'Toàn khoa', icon: ClipboardList, count: tasks.filter(task => isOverdue(task, today)).length, countTone: 'danger' },
               { value: 'evaluations', label: 'Đánh giá', icon: Award },
+              { value: 'rewards', label: 'Thưởng / phạt', icon: Gift },
             ]}
           />
         </div>
 
-        {activeError && !(tab === 'evaluations' ? evalRes.data : tasksRes.data) ? (
-          <ErrorState error={activeError} onRetry={() => (tab === 'evaluations' ? evalRes.reload() : tasksRes.reload())} />
+        {activeError && !activeRes.data ? (
+          <ErrorState error={activeError} onRetry={() => activeRes.reload()} />
         ) : tab === 'overview' ? (
           <StaffOverview
             people={overview.people}
@@ -382,6 +433,20 @@ export const StaffPage: React.FC = () => {
             loading={overviewLoading}
             onOpen={setViewingPerson}
             onAssign={username => setEditingTask(newTask(username))}
+            onOpenRewards={() => setTab('rewards')}
+            evaluations={evaluations}
+            rewards={rewards}
+          />
+        ) : tab === 'rewards' ? (
+          <RewardsTab
+            manager={manager}
+            me={user.username}
+            users={users}
+            rewards={rewards}
+            loading={loading}
+            year={rewardYear}
+            onYearChange={setRewardYear}
+            onOpen={setRewardScope}
           />
         ) : tab !== 'evaluations' ? (
           <>
@@ -477,6 +542,8 @@ export const StaffPage: React.FC = () => {
             onSelfAssess={startSelfAssessment}
             onEditSelf={openSelfAssessment}
             onAcknowledge={setAcknowledging}
+            rewards={rewards}
+            canScoreUser={canScoreUser}
           />
         )}
       </Card>
@@ -490,7 +557,7 @@ export const StaffPage: React.FC = () => {
           onOpenTask={task => setEditingTask(task)}
           onComplete={quickDone}
           onAssign={username => setEditingTask(newTask(username))}
-          onEvaluate={manager ? startEvaluation : undefined}
+          onEvaluate={canScoreUser(viewedSummary.username) ? startEvaluation : undefined}
         />
       )}
 
@@ -587,6 +654,7 @@ export const StaffPage: React.FC = () => {
         today={today}
         errors={evalErrors}
         onOpenExisting={openEvaluation}
+        reward={editingEval ? rewardPeriod(rewards, editingEval.userId || '', editingEval) : null}
       />
       <SelfAssessmentDialog
         draft={selfDraft}
@@ -599,6 +667,17 @@ export const StaffPage: React.FC = () => {
         today={today}
         errors={selfErrors}
       />
+      <RewardDrawer
+        scope={rewardDraft ? null : rewardScope}
+        name={nameOf(rewardScope?.username || '')}
+        rewards={rewards}
+        manager={manager}
+        onClose={() => setRewardScope(null)}
+        onAdd={startReward}
+        onDelete={removeReward}
+        today={today}
+      />
+      <RewardDialog draft={rewardDraft} onChange={setRewardDraft} onClose={() => setRewardDraft(null)} onSave={saveReward} saving={pending === 'save-reward'} userOptions={userOptions.filter(option => canScoreUser(option.value))} />
       <AcknowledgeDialog key={acknowledging?.id || 'none'} evaluation={acknowledging} onClose={() => setAcknowledging(null)} onConfirm={acknowledgeEvaluation} saving={pending === 'ack-eval'} />
     </div>
   );

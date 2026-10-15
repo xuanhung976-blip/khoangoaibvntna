@@ -33,6 +33,7 @@ const MODULE_LABELS: Record<string, string> = {
   briefing: 'Giao ban',
   staff_tasks: 'Công việc',
   staff_evaluations: 'Đánh giá NV',
+  staff_rewards: 'Thưởng/phạt NV',
   inventory: 'Kho',
   '5s': '5S',
   research: 'NCKH',

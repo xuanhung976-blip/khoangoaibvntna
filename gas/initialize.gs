@@ -59,7 +59,7 @@ function getDetectedSchemas() {
     },
     {
       name: 'GiaoBan_Log',
-      columns: ['ID', 'Date', 'Host', 'Content', 'CongViecJson', 'Notes']
+      columns: ['ID', 'Date', 'Host', 'Content', 'CongViecJson', 'Notes', 'Title', 'Time']
     },
     {
       name: 'CongViec_NhanVien',
@@ -77,8 +77,12 @@ function getDetectedSchemas() {
         'DiemThaiDo', 'DiemKyLuat', 'DiemPhoiHop', 'DiemSangKien', 'DiemTong',
         'XepLoai', 'NhanXet', 'NguoiDanhGia', 'NgayDanhGia', 'DiemChuyenMon',
         'NhomDanhGia', 'DiemGoiY', 'SoLieuJson', 'TuDanhGiaJson', 'TrangThai',
-        'NgayXacNhan', 'YKienNhanVien'
+        'NgayXacNhan', 'YKienNhanVien', 'DiemTieuChi', 'DiemThuongPhat'
       ]
+    },
+    {
+      name: 'ThuongPhat_NhanVien',
+      columns: ['ID', 'UserId', 'Ngay', 'Loai', 'Diem', 'LyDo', 'NguoiGhi', 'NgayGhi']
     },
     {
       name: 'KyThuat_Moi',

@@ -40,6 +40,7 @@ import {
   StatCard,
 } from '../../components/ui';
 import type { InsightSeverity } from './insights';
+import { RewardsDashboardCard } from '../staff/RewardsDashboardCard';
 
 const SEVERITY_STYLE: Record<InsightSeverity, { dot: string; badge: 'danger' | 'warning' | 'info'; label: string }> = {
   critical: { dot: 'bg-rose-500', badge: 'danger', label: 'Khẩn' },
@@ -48,7 +49,8 @@ const SEVERITY_STYLE: Record<InsightSeverity, { dot: string; badge: 'danger' | '
 };
 
 export const DashboardPage: React.FC = () => {
-  const { user } = useApp();
+  const { user, chief } = useApp();
+  const manager = chief || String(user.role) === 'DIEU_DUONG_TRUONG';
   const navigate = useNavigate();
   const { summary, loading, validating, error, reload } = useInsights();
   const [filter, setFilter] = useState<'all' | InsightSeverity>('all');
@@ -401,6 +403,8 @@ export const DashboardPage: React.FC = () => {
           {loading ? <Skeleton className="h-44 w-full" /> : <ColumnChart data={trendData} height={176} valueLabel="ca phẫu thuật" onSelect={key => navigate(`/surgery-stats?month=${key}`)} />}
         </SectionCard>
 
+        <div className="space-y-6">
+        {manager && <RewardsDashboardCard />}
         <SectionCard title="Sắp tới" description="Sinh hoạt khoa học trong 14 ngày" icon={Presentation} bodyClassName="p-4">
           {summary.upcomingMeetings.length === 0 ? (
             <EmptyState compact icon={Presentation} title="Chưa có lịch sinh hoạt khoa học" />
@@ -423,6 +427,7 @@ export const DashboardPage: React.FC = () => {
             </ul>
           )}
         </SectionCard>
+        </div>
       </div>
 
     </div>

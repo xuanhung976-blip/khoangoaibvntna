@@ -21,6 +21,20 @@
       "port": 3005
     },
     {
+      "name": "fullstack-env",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/dev-fullstack.ps1",
+        "-Port",
+        "3007"
+      ],
+      "port": 3007
+    },
+    {
       "name": "ui-demo-alt",
       "runtimeExecutable": "npx",
       "runtimeArgs": [

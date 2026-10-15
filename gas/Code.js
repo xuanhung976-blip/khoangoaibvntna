@@ -154,7 +154,7 @@ function getKnownSheetHeaders() {
       'SurgeryService', 'SurgeryType', 'CCCD', 'BHYTCode'
     ],
     BN_LuuY: ['ID', 'PatientId', 'Priority', 'Reason', 'Room', 'Bed'],
-    GiaoBan_Log: ['ID', 'Date', 'Host', 'Content', 'CongViecJson', 'Notes'],
+    GiaoBan_Log: ['ID', 'Date', 'Host', 'Content', 'CongViecJson', 'Notes', 'Title', 'Time'],
     CongViec_NhanVien: [
       'ID',
       'UserId',
@@ -203,8 +203,11 @@ function getKnownSheetHeaders() {
       'TuDanhGiaJson',
       'TrangThai',
       'NgayXacNhan',
-      'YKienNhanVien'
+      'YKienNhanVien',
+      'DiemTieuChi',
+      'DiemThuongPhat'
     ],
+    ThuongPhat_NhanVien: ['ID', 'UserId', 'Ngay', 'Loai', 'Diem', 'LyDo', 'NguoiGhi', 'NgayGhi'],
     May_Moc: ['ID', 'Name', 'Code', 'InCharge', 'PurchaseDate', 'LastMaintenanceDate', 'MaintenanceCycle', 'Condition', 'Notes'],
     Thuoc_Kho: ['ID', 'Name', 'Content', 'Quantity', 'Unit', 'ExpiryDate', 'Notes'],
     DeTai_CoSo: ['ID', 'Topic', 'Author', 'StartDate', 'Deadline', 'Progress', 'Notes'],
@@ -350,6 +353,7 @@ function getAuditSheetInfo_(sheetName) {
     GiaoBan_Log: { module: 'briefing', entityType: 'Briefing', labelFields: ['date', 'host'] },
     CongViec_NhanVien: { module: 'staff_tasks', entityType: 'StaffTask', labelFields: ['tieuDe', 'assigneeName', 'userId'] },
     DanhGia_NhanVien: { module: 'staff_evaluations', entityType: 'StaffEvaluation', labelFields: ['userId', 'nam', 'quy'] },
+    ThuongPhat_NhanVien: { module: 'staff_rewards', entityType: 'StaffReward', labelFields: ['userId', 'loai', 'lyDo'] },
     Thuoc_Kho: { module: 'inventory', entityType: 'Medicine', labelFields: ['name'] },
     May_Moc: { module: 'inventory', entityType: 'Equipment', labelFields: ['name', 'code'] },
     Vung_5S: { module: '5s', entityType: 'Zone5S', labelFields: ['name'] },
@@ -544,6 +548,11 @@ function normalizeBriefingPayload_(data) {
     payload.congViecJson = JSON.stringify(tasks);
     payload.tasks = tasks;
   }
+  // Giờ "HH:mm" phải lưu dạng text, nếu không Sheets tự đổi sang kiểu thời gian và rowToObject trả về ngày 1899-12-30.
+  if (payload.time !== undefined) {
+    const time = String(payload.time || '').replace(/^'/, '').trim();
+    payload.time = time ? "'" + time : '';
+  }
   return payload;
 }
 
@@ -660,7 +669,7 @@ function buildStaffTaskFromBriefing_(briefingId, briefing, task, index, existing
     ngayGiao: briefingDate || new Date().toISOString().split('T')[0],
     hanHoanThanh: String(task.deadline || ''),
     mucDoUuTien: existing && existing.mucDoUuTien ? existing.mucDoUuTien : 'Trung bình',
-    trangThai: existing && existing.trangThai ? existing.trangThai : 'ChÆ°a lÃ m',
+    trangThai: existing && existing.trangThai ? existing.trangThai : 'Chưa làm',
     tienDo: existing && existing.tienDo !== undefined && existing.tienDo !== '' ? existing.tienDo : 0,
     ketQua: existing && existing.ketQua ? existing.ketQua : '',
     ghiChu: existing && existing.ghiChu ? existing.ghiChu : '',
@@ -669,7 +678,7 @@ function buildStaffTaskFromBriefing_(briefingId, briefing, task, index, existing
     sourceTaskId: getBriefingSourceTaskId_(task, index),
     sourceTaskIndex: index,
     sourceDate: briefingDate,
-    sourceLabel: briefingDate ? 'Giao ban ' + briefingDate : 'Giao ban',
+    sourceLabel: [String(briefing.title || '').trim() || 'Giao ban', briefingDate, String(briefing.time || '').replace(/^'/, '').trim()].filter(Boolean).join(' '),
     assigneeUsername: assigneeUsername,
     assigneeName: assigneeName,
     syncStatus: 'active',
@@ -1259,6 +1268,7 @@ function getSheetPermissionMap_() {
     DailyBriefing: { module: 'briefing', entityType: 'DailyBriefing' },
     CongViec_NhanVien: { module: 'staff_performance', entityType: 'StaffTask' },
     DanhGia_NhanVien: { module: 'staff_performance', entityType: 'StaffEvaluation' },
+    ThuongPhat_NhanVien: { module: 'staff_performance', entityType: 'StaffReward' },
     Phan_Truc_Ngay: { module: 'shifts', entityType: 'DailyOnCall' },
     CongTac_DieuDuong: { module: 'dieu_duong', entityType: 'NursingTask' },
     Thuoc_Kho: { module: 'inventory', entityType: 'Medicine' },
@@ -1538,6 +1548,70 @@ function requirePermission_(context, permission, entityId, payload) {
   return actor;
 }
 
+/* ---------- Chấm điểm nhân sự: kiểm soát ở server ---------- */
+// Quyền module staff_performance cho mọi nhân viên ghi được sheet, nên luật theo dòng nằm ở đây:
+// - Chỉ TRUONG_KHOA / DIEU_DUONG_TRUONG chấm điểm, ghi thưởng/phạt, xoá bản đánh giá.
+// - DIEU_DUONG_TRUONG không tự chấm / tự ghi thưởng phạt cho chính mình.
+// - Nhân viên chỉ được tự đánh giá (trạng thái chờ) và xác nhận bản đánh giá của chính mình.
+const EVAL_STATUS_PENDING_ = 'Chờ trưởng khoa';
+const EVAL_STATUS_ACK_ = 'Đã xác nhận';
+const EVAL_OFFICIAL_FIELDS_ = [
+  'diemHoanThanhCongViec', 'diemChuyenMon', 'diemThaiDo', 'diemKyLuat', 'diemPhoiHop', 'diemSangKien',
+  'diemTong', 'xepLoai', 'nguoiDanhGia', 'diemGoiY', 'soLieuJson', 'diemTieuChi', 'diemThuongPhat',
+  'ngayXacNhan', 'yKienNhanVien'
+];
+const EVAL_ACK_FIELDS_ = ['trangThai', 'ngayXacNhan', 'yKienNhanVien'];
+
+function isStaffScoringSheet_(sheetName) {
+  return sheetName === 'DanhGia_NhanVien' || sheetName === 'ThuongPhat_NhanVien';
+}
+
+function assertStaffScoringRules_(context, sheetName, action, data, beforeRecord) {
+  if (context && context.system) return data;
+  const actor = getActorFromContext_(context);
+  const role = normalizeRole_(actor.role);
+  const me = String(actor.username || '').trim().toLowerCase();
+  const target = String((beforeRecord && beforeRecord.userId) || (data && data.userId) || '').trim().toLowerCase();
+  const nextTarget = String((data && data.userId) || target).trim().toLowerCase();
+  const isManager = role === 'TRUONG_KHOA' || role === 'DIEU_DUONG_TRUONG';
+  const deny = message => makeCodedError_('PERMISSION_DENIED', message);
+
+  const actingOnSelf = Boolean(me) && (target === me || nextTarget === me);
+  if (role === 'TRUONG_KHOA' || (isManager && !actingOnSelf)) return data;
+
+  // Từ đây: nhân viên, hoặc điều dưỡng trưởng thao tác trên bản của chính mình (như nhân viên).
+  if (sheetName === 'ThuongPhat_NhanVien' || action === 'delete') {
+    throw deny(isManager ? 'Không tự chấm điểm hoặc ghi thưởng/phạt cho chính mình.' : 'Chỉ trưởng khoa / điều dưỡng trưởng được thực hiện thao tác này.');
+  }
+  if (!me || target !== me || nextTarget !== me) {
+    throw deny('Chỉ được tự đánh giá hoặc xác nhận bản đánh giá của chính mình.');
+  }
+
+  const beforeStatus = String((beforeRecord && beforeRecord.trangThai) || '');
+  if (beforeRecord && beforeStatus !== EVAL_STATUS_PENDING_) {
+    // Bản đã chấm: nhân viên chỉ được xác nhận + ghi ý kiến, không đổi điểm.
+    if (String((data && data.trangThai) || '') !== EVAL_STATUS_ACK_) {
+      throw deny('Bản đánh giá đã chấm — chỉ được xác nhận kết quả.');
+    }
+    const ack = {};
+    EVAL_ACK_FIELDS_.forEach(key => {
+      if (data[key] !== undefined) ack[key] = data[key];
+    });
+    return ack;
+  }
+
+  // Tự đánh giá: luôn ở trạng thái chờ, xoá mọi trường điểm chính thức.
+  if (isManager && String((data && data.trangThai) || '') !== EVAL_STATUS_PENDING_) {
+    throw deny('Không tự chấm điểm cho chính mình — trưởng khoa sẽ chấm.');
+  }
+  const payload = Object.assign({}, data || {});
+  EVAL_OFFICIAL_FIELDS_.forEach(key => {
+    payload[key] = '';
+  });
+  payload.trangThai = EVAL_STATUS_PENDING_;
+  return payload;
+}
+
 function assertUserMutationRules_(context, action, id, data, beforeRecord) {
   const actor = getActorFromContext_(context);
   actor.role = normalizeRole_(actor.role);
@@ -1636,7 +1710,8 @@ function apiAdd(sheetName, data, userRole) {
     // Trim ID to ensure uniqueness safety
     id = id || Utilities.getUuid();
     if (isBriefingSheet_(sheetName)) data = normalizeBriefingPayload_(data);
-    
+    if (isStaffScoringSheet_(sheetName)) data = assertStaffScoringRules_(userRole, sheetName, 'create', data, null);
+
     // Duplicate check for Patients (using Manual IDs)
     // We must check existing IDs in the sheet to prevent duplicates
     if (sheetName === 'DS_BenhNhan') {
@@ -1753,7 +1828,10 @@ function apiUpdate(sheetName, id, data, userRole) {
     if (sheetName === 'Users') {
       assertUserMutationRules_(userRole, 'update', id, data, beforeRecord);
     }
-    
+    if (isStaffScoringSheet_(sheetName)) {
+      data = assertStaffScoringRules_(userRole, sheetName, 'update', data, beforeRecord);
+    }
+
     headers.forEach((h, colIdx) => {
       const key = toCamelCase(h);
       // Skip ID update to ensure integrity
@@ -1826,6 +1904,9 @@ function apiDelete(sheetName, id, userRole) {
     beforeRecord = rowToObject(sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0], headers);
     if (sheetName === 'Users') {
       assertUserMutationRules_(userRole, 'delete', id, null, beforeRecord);
+    }
+    if (isStaffScoringSheet_(sheetName)) {
+      assertStaffScoringRules_(userRole, sheetName, 'delete', {}, beforeRecord);
     }
     sheet.deleteRow(rowIndex);
     logAuditEvent_(buildAuditEvent_(
@@ -2197,7 +2278,13 @@ function getDashboardOverview() {
     return next < today;
   }).length;
 
-  const briefingToday = briefings.find(b => b.date === todayStr);
+  // Một ngày có thể có nhiều buổi giao ban: gộp nội dung các buổi theo giờ.
+  const briefingsToday = briefings
+    .filter(b => b.date === todayStr)
+    .sort((x, y) => String(x.time || '').localeCompare(String(y.time || '')));
+  const briefingToday = briefingsToday.length
+    ? { content: briefingsToday.map(b => (briefingsToday.length > 1 ? '[' + [b.title || 'Giao ban', b.time].filter(Boolean).join(' ') + ']\n' : '') + b.content).join('\n\n') }
+    : null;
   
   // --- AGGREGATED DEADLINES LOGIC ---
   const deadlines = [];
@@ -2306,7 +2393,7 @@ function getDashboardOverview() {
                   addDeadline(
                     'Công việc', 
                     t.taskName, 
-                    `Thuộc giao ban ngày: ${b.date}\nNội dung sự vụ: ${b.content}`, 
+                    `Thuộc ${b.title || 'giao ban'} ngày: ${b.date}${b.time ? ' ' + b.time : ''}\nNội dung sự vụ: ${b.content}`, 
                     t.assignee, 
                     t.deadline, 
                     '/daily-briefing', 

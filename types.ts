@@ -128,6 +128,10 @@ export interface BriefingTask {
 export interface DailyBriefing {
     id: string;
     date: string;
+    /** Tên buổi giao ban (VD: Giao ban sáng, Họp đột xuất) — một ngày có thể có nhiều buổi. */
+    title?: string;
+    /** Giờ bắt đầu HH:mm, dùng để sắp xếp các buổi trong cùng ngày. */
+    time?: string;
     host: string;
     content: string;
     tasks: BriefingTask[];
@@ -323,6 +327,22 @@ export interface StaffEvaluation {
     trangThai?: string;
     ngayXacNhan?: string;
     yKienNhanVien?: string;
+    /** Điểm theo tiêu chí, trước khi cộng trừ thưởng/phạt. */
+    diemTieuChi?: number | string;
+    /** Mức cộng trừ thưởng/phạt của kỳ đã áp vào điểm tổng (TB tháng, đã giới hạn). */
+    diemThuongPhat?: number | string;
+}
+
+/** Một lần thưởng hoặc phạt; điểm luôn là số dương, chiều cộng/trừ theo `loai`. */
+export interface StaffReward {
+    id: string;
+    userId: string;
+    ngay: string;
+    loai: 'Thưởng' | 'Phạt';
+    diem: number | string;
+    lyDo: string;
+    nguoiGhi: string;
+    ngayGhi: string;
 }
 
 export const STAFF_PERFORMANCE_PERMISSION_KEY = 'staff_performance';

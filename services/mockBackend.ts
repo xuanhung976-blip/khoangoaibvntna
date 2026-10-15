@@ -201,6 +201,8 @@ const sheets: Record<string, Row[]> = {
     {
       id: uid('G'),
       date: day(-1),
+      title: 'Giao ban sáng',
+      time: '07:30',
       host: 'BS. Nguyễn Xuân Hùng',
       content: 'I. Tình hình bệnh nhân\n- Tổng số 21 BN, chờ mổ 5.\nII. Ý kiến chỉ đạo\n- Tăng cường theo dõi calci sau mổ.',
       congViecJson: JSON.stringify([
@@ -214,9 +216,47 @@ const sheets: Record<string, Row[]> = {
     { id: uid('W'), userId: 'bs.minh', tieuDe: 'Hoàn thiện hồ sơ bệnh án tháng', noiDung: 'Hoàn thiện hồ sơ bệnh án tháng', nguoiGiao: 'BS. Nguyễn Xuân Hùng', ngayGiao: day(-1), hanHoanThanh: day(2), mucDoUuTien: 'Trung bình', trangThai: 'Đang làm', tienDo: 30, sourceType: 'daily_briefing', sourceDate: day(-1) },
     { id: uid('W'), userId: 'dd.lan', tieuDe: 'Kiểm kê tủ thuốc trực', noiDung: '', nguoiGiao: 'BS. Nguyễn Xuân Hùng', ngayGiao: day(-1), hanHoanThanh: day(-1), mucDoUuTien: 'Khẩn', trangThai: 'Chưa làm', tienDo: 0, sourceType: 'daily_briefing', sourceDate: day(-1) },
     { id: uid('W'), userId: 'admin', tieuDe: 'Chuẩn bị bài SHKH tháng', noiDung: '', nguoiGiao: 'Tự giao', ngayGiao: day(-10), hanHoanThanh: day(5), mucDoUuTien: 'Trung bình', trangThai: 'Hoàn thành', tienDo: 100 },
+    // Lịch sử việc 3 tháng gần đây cho bảng so sánh (đúng hạn / trễ / quá hạn khác nhau giữa các người).
+    ...(
+      [
+        ['bs.minh', -80, -82, 'Hoàn thành'], ['bs.minh', -60, -61, 'Hoàn thành'], ['bs.minh', -35, -36, 'Hoàn thành'], ['bs.minh', -20, -22, 'Hoàn thành'],
+        ['bs.hoa', -75, -70, 'Hoàn thành'], ['bs.hoa', -50, -50, 'Hoàn thành'], ['bs.hoa', -25, null, 'Đang làm'],
+        ['bs.bao', -70, -71, 'Hoàn thành'], ['bs.bao', -45, -40, 'Hoàn thành'], ['bs.bao', -30, -31, 'Hoàn thành'],
+        ['bs.long', -65, null, 'Đang làm'], ['bs.long', -40, -33, 'Hoàn thành'], ['bs.long', -15, null, 'Chưa làm'],
+        ['dd.lan', -72, -73, 'Hoàn thành'], ['dd.lan', -44, -44, 'Hoàn thành'], ['dd.lan', -28, -30, 'Hoàn thành'],
+        ['dd.ha', -68, -69, 'Hoàn thành'], ['dd.ha', -52, -53, 'Hoàn thành'], ['dd.ha', -33, -34, 'Hoàn thành'], ['dd.ha', -18, -19, 'Hoàn thành'],
+        ['dd.nam', -62, -55, 'Hoàn thành'], ['dd.nam', -38, null, 'Đang làm'],
+        ['dd.mai', -58, -59, 'Hoàn thành'], ['dd.mai', -26, -20, 'Hoàn thành'],
+      ] as Array<[string, number, number | null, string]>
+    ).map(([userId, due, doneAt, trangThai], index) => ({
+      id: uid('W'),
+      userId,
+      tieuDe: ['Rà soát hồ sơ bệnh án', 'Báo cáo chỉ số chất lượng', 'Tập huấn quy trình mới', 'Kiểm tra cơ số thuốc trực', 'Cập nhật phác đồ'][index % 5],
+      noiDung: '',
+      nguoiGiao: 'BS. Nguyễn Xuân Hùng',
+      ngayGiao: day(due - 10),
+      hanHoanThanh: day(due),
+      mucDoUuTien: 'Trung bình',
+      trangThai,
+      tienDo: trangThai === 'Hoàn thành' ? 100 : trangThai === 'Đang làm' ? 50 : 0,
+      ngayHoanThanh: doneAt === null ? '' : day(doneAt),
+    })),
   ],
   DanhGia_NhanVien: [
     { id: uid('D'), userId: 'bs.minh', loaiDanhGia: 'Quý', quy: 'Q3', nam: today.getFullYear(), diemHoanThanhCongViec: 90, diemThaiDo: 85, diemKyLuat: 95, diemPhoiHop: 88, diemSangKien: 70, diemTong: 86, xepLoai: 'Tốt', nhanXet: 'Chủ động, nhiệt tình', nguoiDanhGia: 'BS. Nguyễn Xuân Hùng', ngayDanhGia: day(-15) },
+    { id: uid('D'), userId: 'bs.bao', loaiDanhGia: 'Quý', quy: 'Q3', nam: today.getFullYear(), nhomDanhGia: 'BS', diemHoanThanhCongViec: 90, diemChuyenMon: 85, diemThaiDo: 85, diemKyLuat: 90, diemPhoiHop: 80, diemSangKien: 90, diemTieuChi: 87, diemThuongPhat: 2, diemTong: 89, xepLoai: 'Hoàn thành tốt', nhanXet: 'Có sáng kiến được áp dụng', nguoiDanhGia: 'BS. Nguyễn Xuân Hùng', ngayDanhGia: day(-10), trangThai: 'Đã xác nhận' },
+    { id: uid('D'), userId: 'bs.long', loaiDanhGia: 'Quý', quy: 'Q3', nam: today.getFullYear(), nhomDanhGia: 'BS', diemHoanThanhCongViec: 60, diemChuyenMon: 75, diemThaiDo: 70, diemKyLuat: 60, diemPhoiHop: 70, diemSangKien: 60, diemTieuChi: 66, diemThuongPhat: -2, diemTong: 64, xepLoai: 'Hoàn thành', nhanXet: 'Cần cải thiện tiến độ và giờ giấc', nguoiDanhGia: 'BS. Nguyễn Xuân Hùng', ngayDanhGia: day(-10), trangThai: 'Đã đánh giá' },
+  ],
+  ThuongPhat_NhanVien: [
+    { id: uid('TP'), userId: 'bs.minh', ngay: day(-3), loai: 'Thưởng', diem: 5, lyDo: 'Có sáng kiến cải tiến quy trình bàn giao', nguoiGhi: 'BS. Nguyễn Xuân Hùng', ngayGhi: day(-3) },
+    { id: uid('TP'), userId: 'dd.lan', ngay: day(-2), loai: 'Phạt', diem: 2, lyDo: 'Đi trễ giao ban', nguoiGhi: 'BS. Nguyễn Xuân Hùng', ngayGhi: day(-2) },
+    { id: uid('TP'), userId: 'dd.ha', ngay: day(-40), loai: 'Thưởng', diem: 3, lyDo: 'Được người bệnh khen', nguoiGhi: 'ĐD. Nguyễn Thị Lan', ngayGhi: day(-40) },
+    { id: uid('TP'), userId: 'dd.ha', ngay: day(-70), loai: 'Thưởng', diem: 2, lyDo: 'Hỗ trợ ca trực đột xuất', nguoiGhi: 'ĐD. Nguyễn Thị Lan', ngayGhi: day(-70) },
+    { id: uid('TP'), userId: 'bs.long', ngay: day(-50), loai: 'Phạt', diem: 3, lyDo: 'Chậm hoàn thiện hồ sơ bệnh án', nguoiGhi: 'BS. Nguyễn Xuân Hùng', ngayGhi: day(-50) },
+    { id: uid('TP'), userId: 'bs.long', ngay: day(-30), loai: 'Phạt', diem: 2, lyDo: 'Đi trễ giao ban', nguoiGhi: 'BS. Nguyễn Xuân Hùng', ngayGhi: day(-30) },
+    { id: uid('TP'), userId: 'bs.bao', ngay: day(-45), loai: 'Thưởng', diem: 5, lyDo: 'Sáng kiến cải tiến quy trình duyệt mổ', nguoiGhi: 'BS. Nguyễn Xuân Hùng', ngayGhi: day(-45) },
+    { id: uid('TP'), userId: 'dd.nam', ngay: day(-55), loai: 'Phạt', diem: 2, lyDo: 'Đi trễ', nguoiGhi: 'ĐD. Nguyễn Thị Lan', ngayGhi: day(-55) },
+    { id: uid('TP'), userId: 'dd.nam', ngay: day(-35), loai: 'Thưởng', diem: 2, lyDo: 'Hỗ trợ ca trực', nguoiGhi: 'ĐD. Nguyễn Thị Lan', ngayGhi: day(-35) },
   ],
   CongTac_DieuDuong: [
     { id: uid('N'), date: day(0), shift: 'Sáng', task: 'Nhận bàn giao ca đêm', status: 'Hoàn thành', assignee: 'ĐD. Nguyễn Thị Lan', priority: 'Thường' },

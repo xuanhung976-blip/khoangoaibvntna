@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Award, BarChart3, CheckCircle2, ClipboardList, Clock, LayoutGrid, List, PieChart, Plus, Star, Timer, TrendingUp, UsersRound } from 'lucide-react';
-import type { StaffEvaluation, StaffTask } from '../../types';
+import { AlertTriangle, Award, BarChart3, CheckCircle2, ClipboardList, Clock, Gift, LayoutGrid, PieChart, Plus, Star, Timer, TrendingUp, UsersRound } from 'lucide-react';
+import type { StaffEvaluation, StaffReward, StaffTask } from '../../types';
 import { addDays, fmtDate, relativeDay, startOfWeek, toDateKey } from '../../lib/dates';
 import { compactName, matchesQuery } from '../../lib/text';
 import { cn } from '../../lib/cn';
@@ -12,7 +12,6 @@ import {
   Button,
   ChartLegend,
   ColumnChart,
-  DataTable,
   Drawer,
   EmptyState,
   Progress,
@@ -25,11 +24,19 @@ import {
   StackedBarList,
   StatCard,
   Toolbar,
-  type Column,
   type StackSeries,
 } from '../../components/ui';
-import { RANK_TONE, byPeriodDesc, isDone, isOverdue, type StaffGroup, type StaffSummary } from './staffLogic';
+import { RANK_TONE, byPeriodDesc, fmtSigned, isDone, isOverdue, type RewardTotals, type StaffGroup, type StaffSummary } from './staffLogic';
 import { EvaluationCard } from './StaffEvaluations';
+import { StaffComparison } from './StaffComparison';
+
+/** "+3 −2": thưởng xanh, phạt đỏ; số 0 làm mờ. */
+const RewardPair: React.FC<{ totals: RewardTotals }> = ({ totals }) => (
+  <span className="num inline-flex gap-1.5 text-xs font-semibold">
+    <span className={totals.bonus ? 'text-blue-600 dark:text-blue-400' : 'text-faint'}>+{totals.bonus}</span>
+    <span className={totals.penalty ? 'text-rose-600 dark:text-rose-400' : 'text-faint'}>−{totals.penalty}</span>
+  </span>
+);
 
 const LOAD_META: Record<StaffSummary['load'], { label: string; tone: Tone; stripe: string }> = {
   over: { label: 'Cần chú ý', tone: 'danger', stripe: 'before:bg-rose-500' },
@@ -59,12 +66,15 @@ export const StaffOverview: React.FC<{
   loading: boolean;
   onOpen: (username: string) => void;
   onAssign: (username: string) => void;
-}> = ({ people, tasks, today, unassignedCount, loading, onOpen, onAssign }) => {
+  onOpenRewards?: () => void;
+  evaluations: StaffEvaluation[];
+  rewards: StaffReward[];
+}> = ({ people, tasks, today, unassignedCount, loading, onOpen, onAssign, onOpenRewards, evaluations, rewards }) => {
   const [showAllBars, setShowAllBars] = useState(false);
   const [search, setSearch] = useState('');
   const [group, setGroup] = useState<'all' | StaffGroup>('all');
   const [sort, setSort] = useState<Sort>('attention');
-  const [view, setView] = useState<'cards' | 'table'>('cards');
+  const [view, setView] = useState<'cards' | 'compare'>('compare');
 
   const totals = useMemo(() => {
     const open = people.reduce((sum, person) => sum + person.open, 0);
@@ -81,6 +91,9 @@ export const StaffOverview: React.FC<{
       onTime: due.length ? Math.round(due.reduce((sum, person) => sum + (person.onTime || 0), 0) / due.length) : null,
       avgScore: scored.length ? Math.round(scored.reduce((sum, person) => sum + (person.latestScore || 0), 0) / scored.length) : null,
       unscored: people.length - scored.length,
+      monthBonus: people.reduce((sum, person) => sum + person.rewardMonth.bonus, 0),
+      monthPenalty: people.reduce((sum, person) => sum + person.rewardMonth.penalty, 0),
+      penalized: people.filter(person => person.rewardMonth.penalty > 0).length,
     };
   }, [people]);
 
@@ -137,70 +150,10 @@ export const StaffOverview: React.FC<{
     });
   }, [people, group, search, sort]);
 
-  const columns: Column<StaffSummary>[] = [
-    {
-      key: 'name',
-      header: 'Nhân viên',
-      sort: person => person.fullName,
-      cell: person => (
-        <div className="flex items-center gap-3">
-          <Avatar name={person.fullName} size="sm" />
-          <div>
-            <p className="font-medium text-fg">{person.fullName}</p>
-            <p className="text-xs text-muted">{GROUP_LABEL[person.group]}</p>
-          </div>
-        </div>
-      ),
-    },
-    { key: 'load', header: 'Tình trạng', sort: person => LOAD_RANK[person.load], cell: person => <Badge tone={LOAD_META[person.load].tone} dot>{LOAD_META[person.load].label}</Badge> },
-    { key: 'open', header: 'Đang mở', align: 'center', sort: person => person.open, cell: person => <span className="num font-semibold text-fg">{person.open}</span> },
-    {
-      key: 'overdue',
-      header: 'Quá hạn',
-      align: 'center',
-      sort: person => person.overdue,
-      cell: person => <span className={cn('num font-semibold', person.overdue ? 'text-rose-600 dark:text-rose-400' : 'text-faint')}>{person.overdue}</span>,
-    },
-    { key: 'soon', header: 'Sắp đến hạn', align: 'center', hideBelow: 'lg', sort: person => person.dueSoon, cell: person => <span className={cn('num', person.dueSoon ? 'text-amber-600' : 'text-faint')}>{person.dueSoon}</span> },
-    { key: 'done', header: 'Hoàn thành', align: 'center', hideBelow: 'md', sort: person => person.done, cell: person => <span className="num text-muted">{person.done}/{person.total}</span> },
-    {
-      key: 'ontime',
-      header: 'Đúng hạn',
-      hideBelow: 'lg',
-      sort: person => person.onTime ?? -1,
-      cell: person => (person.onTime === null ? <span className="text-faint">—</span> : <Progress value={person.onTime} className="w-28" showLabel tone={person.onTime >= 80 ? 'success' : person.onTime >= 50 ? 'warning' : 'danger'} />),
-    },
-    {
-      key: 'score',
-      header: 'Đánh giá gần nhất',
-      sort: person => person.latestScore ?? -1,
-      cell: person =>
-        person.latestScore === null ? (
-          <span className="text-xs text-faint">Chưa đánh giá</span>
-        ) : (
-          <Badge tone={RANK_TONE[person.latestRank] || 'neutral'} icon={Star}>
-            {person.latestScore} · {person.latestPeriod}
-          </Badge>
-        ),
-    },
-    {
-      key: 'actions',
-      header: '',
-      align: 'right',
-      cell: person => (
-        <div onClick={event => event.stopPropagation()}>
-          <Button size="sm" variant="ghost" icon={Plus} onClick={() => onAssign(person.username)}>
-            Giao việc
-          </Button>
-        </div>
-      ),
-    },
-  ];
-
   return (
     <div>
       {/* Chỉ số toàn khoa */}
-      <div className="grid grid-cols-2 gap-3 border-b border-line p-4 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 border-b border-line p-4 md:grid-cols-3 xl:grid-cols-6">
         <StatCard label="Nhân sự" value={loading ? '…' : totals.staff} icon={UsersRound} tone="primary" hint={`${totals.busy} người đang có việc`} />
         <StatCard label="Việc đang mở" value={loading ? '…' : totals.open} icon={ClipboardList} tone="info" hint={`${totals.dueSoon} việc đến hạn trong 3 ngày`} />
         <StatCard
@@ -218,7 +171,24 @@ export const StaffOverview: React.FC<{
           icon={Award}
           tone="success"
           hint={totals.unscored ? `${totals.unscored} người chưa được đánh giá` : 'Theo lần đánh giá gần nhất'}
-          className="col-span-2 lg:col-span-1"
+        />
+        <StatCard
+          label="Thưởng / phạt tháng"
+          value={
+            loading ? (
+              '…'
+            ) : (
+              <span>
+                <span className="text-blue-600 dark:text-blue-400">+{totals.monthBonus}</span>
+                <span className="mx-1 text-faint">/</span>
+                <span className="text-rose-600 dark:text-rose-400">−{totals.monthPenalty}</span>
+              </span>
+            )
+          }
+          icon={Gift}
+          tone={totals.monthPenalty > totals.monthBonus ? 'warning' : 'success'}
+          hint={totals.penalized ? `${totals.penalized} người bị phạt tháng này` : 'Không ai bị phạt tháng này'}
+          onClick={onOpenRewards}
         />
       </div>
 
@@ -276,6 +246,7 @@ export const StaffOverview: React.FC<{
           ]}
         />
         <div className="flex items-center gap-2 sm:ml-auto">
+          {view === 'cards' && (
           <Select
             value={sort}
             onChange={event => setSort(event.target.value as Sort)}
@@ -287,13 +258,14 @@ export const StaffOverview: React.FC<{
               { value: 'name', label: 'Theo tên' },
             ]}
           />
+          )}
           <Segmented
             size="sm"
             value={view}
             onChange={setView}
             items={[
+              { value: 'compare', label: 'So sánh', icon: BarChart3 },
               { value: 'cards', label: 'Thẻ', icon: LayoutGrid },
-              { value: 'table', label: 'Bảng', icon: List },
             ]}
           />
         </div>
@@ -309,8 +281,8 @@ export const StaffOverview: React.FC<{
         <SkeletonRows />
       ) : rows.length === 0 ? (
         <EmptyState icon={UsersRound} title="Không có nhân viên phù hợp" />
-      ) : view === 'table' ? (
-        <DataTable rows={rows} columns={columns} rowKey={person => person.username} onRowClick={person => onOpen(person.username)} />
+      ) : view === 'compare' ? (
+        <StaffComparison users={rows} tasks={tasks} evaluations={evaluations} rewards={rewards} today={today} onOpen={onOpen} />
       ) : (
         <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {rows.map(person => {
@@ -356,6 +328,17 @@ export const StaffOverview: React.FC<{
                   </div>
                   <Progress value={person.completion} />
                 </div>
+                {(person.rewardMonth.count > 0 || person.rewardQuarter.count > 0) && (
+                  <div className="mt-2 flex items-center justify-between text-xs text-muted">
+                    <span>Thưởng / phạt tháng này</span>
+                    <span className="flex items-center gap-2">
+                      <RewardPair totals={person.rewardMonth} />
+                      <span className="text-faint" title="Mức cộng trừ vào đánh giá quý (TB tháng)">
+                        quý {fmtSigned(person.rewardQuarter.applied)}
+                      </span>
+                    </span>
+                  </div>
+                )}
                 <div className="mt-3 flex items-center justify-between border-t border-line pt-3">
                   {person.latestScore === null ? (
                     <span className="text-xs text-faint">Chưa đánh giá</span>
@@ -469,6 +452,10 @@ export const StaffPersonDrawer: React.FC<{
             { label: 'Quá hạn', value: person.overdue, tone: person.overdue ? 'text-rose-600' : 'text-faint' },
             { label: 'Hoàn thành', value: person.done, tone: 'text-fg' },
             { label: 'Đúng hạn', value: person.onTime === null ? '—' : `${person.onTime}%`, tone: 'text-fg' },
+            { label: 'Thưởng tháng', value: `+${person.rewardMonth.bonus}`, tone: person.rewardMonth.bonus ? 'text-blue-600 dark:text-blue-400' : 'text-faint' },
+            { label: 'Phạt tháng', value: `−${person.rewardMonth.penalty}`, tone: person.rewardMonth.penalty ? 'text-rose-600 dark:text-rose-400' : 'text-faint' },
+            { label: 'Thưởng/phạt quý', value: fmtSigned(person.rewardQuarter.applied), tone: 'text-fg' },
+            { label: 'Đánh giá', value: person.latestScore ?? '—', tone: 'text-fg' },
           ].map(item => (
             <div key={item.label} className="rounded-xl bg-sunken py-2.5">
               <dt className="text-[11px] text-muted">{item.label}</dt>

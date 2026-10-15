@@ -32,9 +32,40 @@ export const parseBriefings = (raw: unknown[], users: DirectoryUser[]): DailyBri
           assigneeName: task.assigneeName || user?.fullName || task.assignee || '',
         };
       });
-      return { ...item, date: toDateKey(item.date) || item.date, content: String(item.content || ''), host: String(item.host || ''), tasks: normalized } as DailyBriefing;
+      return {
+        ...item,
+        date: toDateKey(item.date) || item.date,
+        title: String(item.title || '').trim(),
+        time: normalizeTime(item.time),
+        content: String(item.content || ''),
+        host: String(item.host || ''),
+        tasks: normalized,
+      } as DailyBriefing;
     })
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    .sort(compareBriefings);
+};
+
+/** Chuẩn hoá giờ về HH:mm (sheet có thể trả về "7:30", "07:30:00" hoặc chuỗi ngày giờ). */
+export const normalizeTime = (value: unknown): string => {
+  const match = String(value ?? '').match(/(\d{1,2}):(\d{2})/);
+  if (!match) return '';
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return '';
+  return `${String(hour).padStart(2, '0')}:${match[2]}`;
+};
+
+/** Mới nhất trước: ngày giảm dần, trong cùng ngày buổi muộn hơn đứng trước (buổi không ghi giờ xếp cuối ngày). */
+export const compareBriefings = (a: DailyBriefing, b: DailyBriefing) =>
+  String(b.date).localeCompare(String(a.date)) || String(b.time || '').localeCompare(String(a.time || ''));
+
+export const briefingLabel = (briefing: Pick<DailyBriefing, 'title' | 'time'>) =>
+  [briefing.title?.trim() || 'Giao ban', briefing.time].filter(Boolean).join(' · ');
+
+/** Gợi ý tên buổi theo giờ; nếu trong ngày đã có buổi cùng tên thì gợi ý "Họp bổ sung". */
+export const suggestBriefingTitle = (time: string, existingTitles: string[]) => {
+  const natural = Number(time.slice(0, 2)) < 12 ? 'Giao ban sáng' : 'Giao ban chiều';
+  return existingTitles.some(title => title.trim().toLowerCase() === natural.toLowerCase()) ? 'Họp bổ sung' : natural;
 };
 
 export const isTaskOverdue = (task: BriefingTask, today: string) => {

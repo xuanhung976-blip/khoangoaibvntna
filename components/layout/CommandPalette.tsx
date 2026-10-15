@@ -79,7 +79,7 @@ export const CommandPalette: React.FC = () => {
       { id: 'a-new-patient', group: 'Thao tác nhanh', label: 'Tiếp nhận bệnh nhân mới', icon: UserPlus, keywords: 'them benh nhan nhap vien', run: go('/clinical?new=1') },
       { id: 'a-approve', group: 'Thao tác nhanh', label: 'Duyệt mổ bệnh nhân chờ', icon: Stethoscope, keywords: 'duyet mo', run: go('/surgery-approval') },
       { id: 'a-schedule-today', group: 'Thao tác nhanh', label: 'Xem / in lịch mổ hôm nay', icon: Printer, keywords: 'lich mo in hom nay', run: go(`/surgery-approval?tab=schedule&date=${todayKey()}`) },
-      { id: 'a-briefing', group: 'Thao tác nhanh', label: 'Ghi sổ giao ban hôm nay', icon: ClipboardPlus, keywords: 'giao ban moi', run: go('/daily-briefing?new=1') },
+      { id: 'a-briefing', group: 'Thao tác nhanh', label: 'Ghi buổi giao ban mới', icon: ClipboardPlus, keywords: 'giao ban moi', run: go('/daily-briefing?new=1') },
       { id: 'a-nursing', group: 'Thao tác nhanh', label: 'Thêm việc điều dưỡng', icon: HeartPulse, keywords: 'dieu duong viec ca', run: go('/nursing-tasks?new=1') },
       { id: 'a-shifts', group: 'Thao tác nhanh', label: 'Phân lịch trực tuần', icon: CalendarPlus, keywords: 'lich truc tuan', run: go('/shifts?view=week') },
       { id: 'a-password', group: 'Tài khoản', label: 'Đổi mật khẩu', icon: KeyRound, keywords: 'mat khau', run: () => setPasswordOpen(true) },

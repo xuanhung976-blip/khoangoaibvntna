@@ -8,7 +8,7 @@ import { KEYS } from '../../hooks/useData';
 import { useAction } from '../../hooks/useAction';
 import { useInsights } from '../../hooks/useInsights';
 import { useResource } from '../../lib/resource';
-import { fmtDate, relativeDay, todayKey, toDateKey, weekdayLong } from '../../lib/dates';
+import { fmtDate, nowTimeKey, relativeDay, todayKey, toDateKey, weekdayLong } from '../../lib/dates';
 import { matchesQuery } from '../../lib/text';
 import { printTable } from '../../lib/print';
 import { cn } from '../../lib/cn';
@@ -31,7 +31,7 @@ import {
   Textarea,
   showToast,
 } from '../../components/ui';
-import { composeBriefing, isTaskOverdue, parseBriefings } from './briefingLogic';
+import { briefingLabel, composeBriefing, isTaskOverdue, normalizeTime, parseBriefings, suggestBriefingTitle } from './briefingLogic';
 
 type Bundle = { briefings: DailyBriefing[]; users: Array<{ username: string; fullName: string }> };
 
@@ -40,6 +40,8 @@ const useBriefings = () =>
     const bundle = await getBriefingBundle(options);
     return { users: bundle.users, briefings: parseBriefings(bundle.briefings, bundle.users) };
   });
+
+const TITLE_OPTIONS = ['Giao ban sáng', 'Giao ban chiều', 'Giao ban trực', 'Họp bổ sung', 'Họp đột xuất'];
 
 const emptyTask = (): Partial<BriefingTask> => ({ taskName: '', assigneeUsername: '', deadline: '', progress: 0 });
 
@@ -58,20 +60,33 @@ export const BriefingPage: React.FC = () => {
   const briefings = data?.briefings || [];
   const users = data?.users || [];
   const userOptions = useMemo(() => users.map(item => ({ value: item.username, label: item.fullName || item.username, keywords: item.username })), [users]);
-  const todayBriefing = briefings.find(item => toDateKey(item.date) === today);
+  const todayBriefings = useMemo(() => briefings.filter(item => toDateKey(item.date) === today), [briefings, today]);
+  const countByDate = useMemo(() => {
+    const counts = new Map<string, number>();
+    briefings.forEach(item => counts.set(toDateKey(item.date), (counts.get(toDateKey(item.date)) || 0) + 1));
+    return counts;
+  }, [briefings]);
 
   const filtered = useMemo(
-    () => briefings.filter(item => matchesQuery(search, item.content, item.host, fmtDate(item.date), ...(item.tasks || []).map(task => `${task.taskName} ${task.assigneeName}`))),
+    () => briefings.filter(item => matchesQuery(search, item.title, item.content, item.host, fmtDate(item.date), ...(item.tasks || []).map(task => `${task.taskName} ${task.assigneeName}`))),
     [briefings, search],
   );
 
+  // Một ngày có thể có nhiều buổi giao ban (sáng, chiều, họp đột xuất…): luôn tạo buổi mới.
+  const newBriefing = (content = ''): Partial<DailyBriefing> => {
+    const time = nowTimeKey();
+    return {
+      date: today,
+      time,
+      title: suggestBriefingTitle(time, todayBriefings.map(item => item.title || '')),
+      host: summary.todayShift?.doctor || user.fullName,
+      content,
+      tasks: [],
+    };
+  };
+
   const openNew = () => {
-    if (todayBriefing) {
-      setEditing({ ...todayBriefing });
-      showToast('Hôm nay đã có sổ giao ban — mở để bổ sung', 'info');
-    } else {
-      setEditing({ date: today, host: summary.todayShift?.doctor || user.fullName, content: '', tasks: [] });
-    }
+    setEditing(newBriefing());
     setNewTask(emptyTask());
   };
 
@@ -105,13 +120,20 @@ export const BriefingPage: React.FC = () => {
 
   const save = async () => {
     if (!editing?.date || !String(editing.content || '').trim()) return showToast('Vui lòng nhập ngày và nội dung giao ban', 'warning');
+    if (editing.time && !normalizeTime(editing.time)) return showToast('Giờ giao ban không hợp lệ', 'warning');
     if ((editing.tasks || []).some(task => !String(task.taskName || '').trim() || !task.assigneeUsername)) {
       return showToast('Mỗi công việc cần có tên việc và người thực hiện', 'warning');
     }
     if (String(newTask.taskName || '').trim()) return showToast('Bạn có việc đang nhập dở — bấm "Thêm" hoặc xoá trước khi lưu', 'warning');
-    const payload = { ...editing, content: String(editing.content).trim(), tasks: editing.tasks || [] } as DailyBriefing;
+    const payload = {
+      ...editing,
+      title: String(editing.title || '').trim() || 'Giao ban',
+      time: normalizeTime(editing.time),
+      content: String(editing.content).trim(),
+      tasks: editing.tasks || [],
+    } as DailyBriefing;
     const result = await run('save', () => (payload.id ? updateBriefing(payload.id, payload) : addBriefing(payload)), {
-      success: payload.id ? 'Đã cập nhật giao ban' : 'Đã lưu sổ giao ban',
+      success: payload.id ? 'Đã cập nhật giao ban' : `Đã lưu ${payload.title}`,
       invalidate: [KEYS.briefings, KEYS.ops, KEYS.staffTasks],
     });
     if (result !== undefined) setEditing(null);
@@ -120,7 +142,7 @@ export const BriefingPage: React.FC = () => {
   const print = (briefing: DailyBriefing) => {
     const ok = printTable({
       title: 'Sổ giao ban khoa',
-      subtitle: `${weekdayLong(toDateKey(briefing.date))}, ngày ${fmtDate(briefing.date)} · Chủ trì: ${briefing.host || '—'}`,
+      subtitle: `${briefingLabel(briefing)} — ${weekdayLong(toDateKey(briefing.date))}, ngày ${fmtDate(briefing.date)} · Chủ trì: ${briefing.host || '—'}`,
       intro: briefing.content,
       columns: (briefing.tasks || []).length
         ? [
@@ -153,18 +175,18 @@ export const BriefingPage: React.FC = () => {
       <PageHeader
         title="Giao ban"
         icon={ClipboardList}
-        description="Sổ giao ban hàng ngày & phân công việc — việc được giao tự đồng bộ sang Công việc & Đánh giá"
+        description="Sổ giao ban & phân công việc — một ngày có thể ghi nhiều buổi; việc được giao tự đồng bộ sang Công việc & Đánh giá"
         actions={
           <>
             <Button variant="ghost" iconOnly icon={RefreshCw} loading={validating} onClick={() => reload()} aria-label="Làm mới" />
-            <Button variant="primary" icon={todayBriefing ? Edit3 : Plus} onClick={openNew}>
-              {todayBriefing ? 'Bổ sung giao ban hôm nay' : 'Ghi giao ban hôm nay'}
+            <Button variant="primary" icon={Plus} onClick={openNew}>
+              {todayBriefings.length ? `Thêm buổi giao ban (hôm nay: ${todayBriefings.length})` : 'Ghi giao ban hôm nay'}
             </Button>
           </>
         }
       />
 
-      {!loading && !todayBriefing && (
+      {!loading && todayBriefings.length === 0 && (
         <Card className="flex flex-col gap-4 border-dashed p-5 sm:flex-row sm:items-center">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary-soft text-primary">
             <Sparkles className="h-5 w-5" />
@@ -179,7 +201,7 @@ export const BriefingPage: React.FC = () => {
             variant="primary"
             icon={Sparkles}
             onClick={() => {
-              setEditing({ date: today, host: summary.todayShift?.doctor || user.fullName, content: composeBriefing(summary, today), tasks: [] });
+              setEditing(newBriefing(composeBriefing(summary, today)));
               setNewTask(emptyTask());
             }}
           >
@@ -213,6 +235,7 @@ export const BriefingPage: React.FC = () => {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                        {((countByDate.get(key) || 0) > 1 || item.title || item.time) && <Badge tone={key === today ? 'primary' : 'neutral'}>{briefingLabel(item)}</Badge>}
                         <span className="font-medium text-fg">{weekdayLong(key)}</span>
                         <span>· {relativeDay(key)}</span>
                         {item.host && (
@@ -249,7 +272,7 @@ export const BriefingPage: React.FC = () => {
           open
           onClose={() => setViewing(null)}
           size="md"
-          title={`Giao ban ${fmtDate(viewing.date)}`}
+          title={`${briefingLabel(viewing)} — ${fmtDate(viewing.date)}`}
           subtitle={`${weekdayLong(toDateKey(viewing.date))} · Chủ trì: ${viewing.host || '—'}`}
           footer={
             <>
@@ -307,7 +330,7 @@ export const BriefingPage: React.FC = () => {
         onClose={() => setEditing(null)}
         persistent
         size="lg"
-        title={editing?.id ? `Sửa giao ban ${fmtDate(editing.date)}` : 'Ghi sổ giao ban'}
+        title={editing?.id ? `Sửa ${briefingLabel(editing)} — ${fmtDate(editing.date)}` : 'Ghi buổi giao ban mới'}
         footer={
           <>
             <Button variant="ghost" onClick={() => setEditing(null)}>
@@ -322,8 +345,19 @@ export const BriefingPage: React.FC = () => {
         {editing && (
           <div className="space-y-6">
             <FormGrid>
-              <Field label="Ngày giao ban" required>
-                <Input type="date" value={toDateKey(editing.date) || ''} onChange={event => setEditing({ ...editing, date: event.target.value })} />
+              <Field label="Tên buổi">
+                <Input value={editing.title || ''} onChange={event => setEditing({ ...editing, title: event.target.value })} placeholder="Giao ban sáng, Họp đột xuất…" list="briefing-title-options" />
+                <datalist id="briefing-title-options">
+                  {TITLE_OPTIONS.map(option => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
+              </Field>
+              <Field label="Ngày & giờ giao ban" required>
+                <div className="flex gap-2">
+                  <Input type="date" value={toDateKey(editing.date) || ''} onChange={event => setEditing({ ...editing, date: event.target.value })} className="min-w-0 flex-1" />
+                  <Input type="time" value={editing.time || ''} onChange={event => setEditing({ ...editing, time: event.target.value })} className="w-28" aria-label="Giờ giao ban" />
+                </div>
               </Field>
               <Field label="Người chủ trì">
                 <Input value={editing.host || ''} onChange={event => setEditing({ ...editing, host: event.target.value })} />
@@ -407,11 +441,18 @@ export const BriefingPage: React.FC = () => {
                 </div>
               </div>
             </section>
-            {editing.id && (
-              <p className="flex items-center gap-1.5 text-xs text-muted">
-                <CalendarDays className="h-3.5 w-3.5" /> Đang sửa giao ban ngày {fmtDate(editing.date)}.
-              </p>
-            )}
+            {(() => {
+              const sameDay = briefings.filter(item => item.id !== editing.id && toDateKey(item.date) === toDateKey(editing.date));
+              if (!editing.id && sameDay.length === 0) return null;
+              return (
+                <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
+                  <CalendarDays className="h-3.5 w-3.5" />
+                  {editing.id ? `Đang sửa ${briefingLabel(editing).toLowerCase()} ngày ${fmtDate(editing.date)}.` : `Ngày ${fmtDate(editing.date)} đã có ${sameDay.length} buổi khác:`}
+                  {editing.id && sameDay.length > 0 && <span>Cùng ngày còn:</span>}
+                  {sameDay.length > 0 && <span className="text-fg">{sameDay.map(item => briefingLabel(item)).join(', ')}</span>}
+                </p>
+              );
+            })()}
           </div>
         )}
       </Drawer>

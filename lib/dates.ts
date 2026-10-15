@@ -7,6 +7,10 @@ const WEEKDAYS_LONG = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Th
 
 export const todayKey = () => getVietnamDateKey();
 
+/** Giờ hiện tại theo giờ Việt Nam, dạng HH:mm. */
+export const nowTimeKey = (date = new Date()): string =>
+  new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
+
 /** Chuẩn hoá mọi dạng ngày (yyyy-mm-dd, dd/mm/yyyy, ISO) về khóa yyyy-mm-dd; trả về '' nếu không hợp lệ. */
 export const toDateKey = (value: unknown): string => {
   const parsed = parseCalendarDate(value);

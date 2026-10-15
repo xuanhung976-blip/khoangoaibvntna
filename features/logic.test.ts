@@ -8,7 +8,7 @@ import { buildCopy, nextStatus, normalizeShift, progressOf } from './nursing/nur
 import { suggestRoster, countDuties } from './shifts/shiftsLogic';
 import { casesInMonth, countBy } from './surgery/statsLogic';
 import { calculateSurgeryStats } from '../utils/surgeryStats';
-import { parseBriefings, composeBriefing } from './briefing/briefingLogic';
+import { parseBriefings, composeBriefing, normalizeTime, suggestBriefingTitle } from './briefing/briefingLogic';
 import { presetForTopic } from './research/researchLogic';
 
 const patient = (overrides: Partial<Patient>): Patient => ({
@@ -213,6 +213,29 @@ describe('briefing', () => {
     expect(briefing.tasks[0]).toMatchObject({ id: 'T1', assigneeUsername: 'tranb', assigneeName: 'Trần B' });
   });
 
+  it('một ngày nhiều buổi: sắp xếp ngày mới trước, trong ngày buổi muộn trước', () => {
+    const list = parseBriefings(
+      [
+        { id: 'S', date: '2026-10-14', time: '7:30', title: 'Giao ban sáng', content: 'a' },
+        { id: 'X', date: '2026-10-13', time: '14:00', content: 'b' },
+        { id: 'C', date: '2026-10-14', time: '14:00:00', title: 'Giao ban chiều', content: 'c' },
+        { id: 'N', date: '2026-10-14', content: 'không giờ' },
+      ],
+      [],
+    );
+    expect(list.map(item => item.id)).toEqual(['C', 'S', 'N', 'X']);
+    expect(list[1].time).toBe('07:30');
+    expect(list[0].time).toBe('14:00');
+  });
+
+  it('chuẩn hoá giờ & gợi ý tên buổi', () => {
+    expect(normalizeTime('25:00')).toBe('');
+    expect(normalizeTime('1899-12-30T07:05:00')).toBe('07:05');
+    expect(suggestBriefingTitle('07:10', [])).toBe('Giao ban sáng');
+    expect(suggestBriefingTitle('09:00', ['Giao ban sáng'])).toBe('Họp bổ sung');
+    expect(suggestBriefingTitle('14:00', ['Giao ban sáng'])).toBe('Giao ban chiều');
+  });
+
   it('soạn nội dung giao ban có số liệu', () => {
     const input = emptyInput();
     input.patients = [patient({ id: 'A', status: 'DaDuyet', surgeryDate: '2026-10-14', surgeryMethod: 'TOETVA', surgeon: 'BS An' })];
@@ -317,6 +340,72 @@ describe('summarizeStaff', () => {
     expect(normalizeEvaluation({ id: 's', userId: 'a', trangThai: 'Chờ trưởng khoa', diemTong: 80 })).toMatchObject({ diemTong: 0, xepLoai: '' });
   });
 
+  it('thưởng / phạt: tổng theo tháng, TB chia đủ số tháng, giới hạn mức cộng trừ', async () => {
+    const { normalizeReward, rewardMonths, rewardPeriod, finalScore, validateEvaluation } = await import('./staff/staffLogic');
+    const rewards = [
+      normalizeReward({ id: '1', userId: 'a', ngay: '2026-07-05', loai: 'Thưởng', diem: 5 }),
+      normalizeReward({ id: '2', userId: 'a', ngay: '2026-07-20', loai: 'Phạt', diem: -2 }), // dấu âm nhập nhầm vẫn hiểu là 2 điểm phạt
+      normalizeReward({ id: '3', userId: 'a', ngay: '2026-09-01', loai: 'Phạt', diem: 9 }),
+      normalizeReward({ id: '4', userId: 'b', ngay: '2026-07-05', loai: 'Thưởng', diem: 3 }),
+    ];
+    const months = rewardMonths(rewards, 'a', 2026);
+    expect(months[6]).toEqual({ bonus: 5, penalty: 2, net: 3, count: 2 });
+    expect(months[7].count).toBe(0);
+    // Q3: (5 − 2 − 9) / 3 tháng = −2 (tháng 8 không phát sinh vẫn được chia).
+    expect(rewardPeriod(rewards, 'a', { loaiDanhGia: 'Quý', quy: 'Q3', nam: 2026 })).toMatchObject({ bonus: 5, penalty: 11, months: 3, average: -2, applied: -2 });
+    // Năm: −6 / 12 = −0.5 → làm tròn.
+    expect(rewardPeriod(rewards, 'a', { loaiDanhGia: 'Năm', nam: 2026 })).toMatchObject({ months: 12, average: -0.5 });
+    const heavy = [normalizeReward({ id: 'x', userId: 'c', ngay: '2026-08-01', loai: 'Phạt', diem: 90 })];
+    expect(rewardPeriod(heavy, 'c', { loaiDanhGia: 'Quý', quy: 'Q3', nam: 2026 }).applied).toBe(-15);
+    expect(finalScore(95, 10)).toBe(100);
+    expect(finalScore(10, -15)).toBe(0);
+    // Xếp loại / bắt buộc nhận xét tính theo điểm cuối: 86 + 5 = 91 → xuất sắc.
+    const bs = { nhomDanhGia: 'BS', diemHoanThanhCongViec: 100, diemChuyenMon: 80, diemThaiDo: 80, diemKyLuat: 80, diemPhoiHop: 80, diemSangKien: 80 };
+    expect(validateEvaluation(bs, 95, 0)).toEqual([]);
+    expect(validateEvaluation(bs, 95, 5)[0]).toMatch(/xuất sắc/);
+  });
+
+  it('tóm tắt nhân viên có thưởng / phạt tháng và quý hiện tại', async () => {
+    const { summarizeStaff, normalizeReward } = await import('./staff/staffLogic');
+    const rewards = [
+      normalizeReward({ id: '1', userId: 'a', ngay: '2026-10-02', loai: 'Phạt', diem: 3 }),
+      normalizeReward({ id: '2', userId: 'a', ngay: '2026-09-20', loai: 'Thưởng', diem: 6 }),
+      normalizeReward({ id: '3', userId: 'a', ngay: '2026-10-30', loai: 'Thưởng', diem: 4 }), // sau hôm nay: chưa tính tháng này
+    ];
+    const [person] = summarizeStaff([{ username: 'a', fullName: 'A' }], [], [], '2026-10-14', rewards).people;
+    expect(person.rewardMonth).toEqual({ bonus: 0, penalty: 3, net: -3, count: 1 });
+    expect(person.rewardQuarter).toMatchObject({ bonus: 4, penalty: 3, applied: 0 });
+  });
+
+  it('bảng so sánh: số liệu việc, thưởng/phạt, đánh giá theo cùng một kỳ', async () => {
+    const { compareStaff, compareBounds, normalizeTask, normalizeReward, normalizeEvaluation, meanOf } = await import('./staff/staffLogic');
+    const users = [
+      { username: 'a', fullName: 'BS. A' },
+      { username: 'b', fullName: 'ĐD. B' },
+    ];
+    const tasks = [
+      normalizeTask({ id: '1', userId: 'a', hanHoanThanh: '2026-08-05', trangThai: 'Hoàn thành', ngayHoanThanh: '2026-08-01' }),
+      normalizeTask({ id: '2', userId: 'a', hanHoanThanh: '2026-09-10', trangThai: 'Đang làm' }),
+      normalizeTask({ id: '3', userId: 'b', hanHoanThanh: '2026-10-02', trangThai: 'Đang làm' }), // quý khác
+    ];
+    const rewards = [
+      normalizeReward({ id: 'r1', userId: 'a', ngay: '2026-08-10', loai: 'Phạt', diem: 6 }),
+      normalizeReward({ id: 'r2', userId: 'b', ngay: '2026-07-01', loai: 'Thưởng', diem: 3 }),
+    ];
+    const evaluations = [
+      normalizeEvaluation({ id: 'e', userId: 'a', loaiDanhGia: 'Quý', quy: 'Q3', nam: 2026, diemTieuChi: 80, diemThuongPhat: -2, diemTong: 78, xepLoai: 'Hoàn thành tốt' }),
+    ];
+    const q3 = { kind: 'quarter' as const, year: 2026, month: 8, quarter: 3 };
+    const [a, b] = compareStaff(users, tasks, evaluations, rewards, q3, '2026-10-14');
+    expect(a).toMatchObject({ assigned: 2, done: 1, overdue: 1, onTimeRate: 50, suggested: 50, penalty: 6, rewardAvg: -2, criteria: 80, final: 78, rank: 'Hoàn thành tốt' });
+    expect(b).toMatchObject({ assigned: 0, onTimeRate: null, bonus: 3, rewardAvg: 1, final: null, evalLabel: 'Chưa chấm' });
+    // Xem theo tháng 8: thưởng/phạt chia 1 tháng, đánh giá lấy theo Q3.
+    const aug = compareStaff(users, tasks, evaluations, rewards, { ...q3, kind: 'month' }, '2026-10-14')[0];
+    expect(aug).toMatchObject({ assigned: 1, rewardAvg: -6, final: 78 });
+    expect(compareBounds({ ...q3, kind: 'month', month: 2 })).toMatchObject({ from: '2026-02-01', to: '2026-02-28', months: 1 });
+    expect(meanOf([50, null, 70])).toBe(60);
+  });
+
   it('điểm gần nhất theo kỳ, bỏ qua bản tự đánh giá đang chờ', async () => {
     const { summarizeStaff, normalizeEvaluation } = await import('./staff/staffLogic');
     const evaluations = [
@@ -327,6 +416,47 @@ describe('summarizeStaff', () => {
     ];
     const [person] = summarizeStaff([{ username: 'a', fullName: 'A' }], [], evaluations, '2026-10-14').people;
     expect(person).toMatchObject({ latestScore: 80, latestPeriod: 'Q3/2026' });
+  });
+
+  it('phát hiện thưởng/phạt đổi sau khi chấm', async () => {
+    const { staleRewardAdjustment, normalizeEvaluation, normalizeReward } = await import('./staff/staffLogic');
+    const evaluation = normalizeEvaluation({ id: 'e', userId: 'a', loaiDanhGia: 'Quý', quy: 'Q3', nam: 2026, diemTieuChi: 80, diemThuongPhat: -2, diemTong: 78 });
+    const penalty = normalizeReward({ id: 'r1', userId: 'a', ngay: '2026-08-10', loai: 'Phạt', diem: 6 });
+    expect(staleRewardAdjustment(evaluation, [penalty])).toBeNull();
+    expect(staleRewardAdjustment(evaluation, [penalty, normalizeReward({ id: 'r2', userId: 'a', ngay: '2026-09-01', loai: 'Phạt', diem: 6 })])).toBe(-4);
+    expect(staleRewardAdjustment(evaluation, [])).toBe(0);
+    const pending = normalizeEvaluation({ id: 'p', userId: 'a', loaiDanhGia: 'Quý', quy: 'Q3', nam: 2026, trangThai: 'Chờ trưởng khoa' });
+    expect(staleRewardAdjustment(pending, [penalty])).toBeNull();
+  });
+
+  it('mẫu in phiếu đánh giá & bảng tổng hợp', async () => {
+    const { evaluationPrintModel, periodSummaryPrintModel, normalizeEvaluation } = await import('./staff/staffLogic');
+    const scored = normalizeEvaluation({
+      id: 'e', userId: 'a', loaiDanhGia: 'Quý', quy: 'Q3', nam: 2026, nhomDanhGia: 'KHAC',
+      diemHoanThanhCongViec: 80, diemThaiDo: 90, diemKyLuat: 70, diemPhoiHop: 80, diemSangKien: 60,
+      diemTieuChi: 78, diemThuongPhat: 2, diemTong: 80, xepLoai: 'Hoàn thành tốt', nguoiDanhGia: 'BS TK',
+      trangThai: 'Đã xác nhận', ngayXacNhan: '2026-10-05',
+    });
+    const sheet = evaluationPrintModel(scored, 'Nguyễn A');
+    expect(sheet.rows).toHaveLength(5 + 3);
+    expect(sheet.rows[0]).toEqual([1, 'Hoàn thành công việc', '35%', '', 80, '28']);
+    expect(sheet.rows[sheet.rows.length - 1]).toEqual(['', 'ĐIỂM CUỐI — XẾP LOẠI', '', '', '', '80 — Hoàn thành tốt']);
+    expect(sheet.intro).toContain('Nhóm: Khác');
+
+    const pending = normalizeEvaluation({ id: 'p', userId: 'b', loaiDanhGia: 'Quý', quy: 'Q3', nam: 2026, trangThai: 'Chờ trưởng khoa' });
+    const users = [{ username: 'a', fullName: 'Nguyễn A' }, { username: 'b', fullName: 'Trần B' }];
+    const summary = periodSummaryPrintModel(users, [scored, pending], { loaiDanhGia: 'Quý', quy: 'Q3', nam: 2026 });
+    expect(summary.rows).toEqual([[1, 'Nguyễn A', 'Khác', 78, '+2', 80, 'Hoàn thành tốt', 'Đã xác nhận 05/10/2026']]);
+    expect(summary.intro).toContain('Đã đánh giá 1/2 nhân viên (còn 1 chưa chấm)');
+  });
+
+  it('ĐD trưởng không tự chấm mình, trưởng khoa chấm được tất cả', async () => {
+    const { canScore } = await import('./staff/staffLogic');
+    const headNurse = { username: 'ddt', chief: false, manager: true };
+    expect(canScore(headNurse, 'dd.a')).toBe(true);
+    expect(canScore(headNurse, 'ddt')).toBe(false);
+    expect(canScore({ username: 'tk', chief: true, manager: true }, 'tk')).toBe(true);
+    expect(canScore({ username: 'nv', chief: false, manager: false }, 'dd.a')).toBe(false);
   });
 });
 

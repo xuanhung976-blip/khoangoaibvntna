@@ -34,6 +34,7 @@ export const KEYS = {
   nursing: 'nursing',
   staffTasks: 'staffTasks',
   staffEvaluations: 'staffEvaluations',
+  staffRewards: 'staffRewards',
   users: 'users',
   permissions: 'permissions',
   configs: 'configs',
