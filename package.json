@@ -5,28 +5,40 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:demo": "vite --mode demo --port 5174",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "report:surgery-data": "node scripts/report_surgery_data_quality.js",
+    "report:sync": "node scripts/report_sync_reconciliation.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",
-    "googleapis": "^140.0.0",
+    "exceljs": "^4.4.0",
+    "googleapis": "^176.0.0",
     "lucide-react": "^0.344.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hot-toast": "^2.4.1",
-    "react-router-dom": "^6.22.3",
-    "xlsx": "^0.18.5"
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
-    "@vitejs/plugin-react": "^4.2.1",
+    "@vitejs/plugin-react": "^6.1.0",
     "autoprefixer": "^10.4.18",
-    "postcss": "^8.4.35",
+    "postcss": "^8.5.26",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.2.2",
-    "vite": "^5.1.4"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "exceljs": {
+      "picomatch": "^2.3.2",
+      "uuid": "^11.1.1"
+    }
   }
 }

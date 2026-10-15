@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+reports/
 dist-ssr
 *.local
 .env
@@ -28,3 +29,14 @@ dist-ssr
 *.sw?
 
 .vercel
+.codex-tmp/
+
+# Sản phẩm phụ khi dựng tài liệu / đối chiếu dữ liệu (không phải mã nguồn app)
+.docx_unpack_*/
+.docx_final_render/
+.append_only_render/
+.expanded_appendix_render/
+.report_stage.docx
+.tmp_*.py
+__pycache__/
+outputs/

@@ -2,12 +2,26 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Khoa Ngoại Tổng Hợp - Management System</title>
-    <link rel="icon" type="image/png" href="https://lh3.googleusercontent.com/d/1XJ8J_YkQ_Z3Z4P-Xz_Z_Z_Z_Z_Z_Z_Z_Z">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f766e">
+    <meta name="description" content="Hệ thống điều hành Khoa Ngoại Tổng Hợp - Bệnh viện Nội tiết Nghệ An">
+    <title>Khoa Ngoại Tổng Hợp</title>
+    <link rel="icon" type="image/png" href="/logo.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+    <script>
+      // Áp dụng giao diện sáng/tối trước khi React render để tránh nháy màn hình.
+      (function () {
+        try {
+          var pref = localStorage.getItem('kn_theme') || 'system';
+          var dark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
 </head>
-<body class="bg-slate-50 text-slate-900">
+<body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
 </body>

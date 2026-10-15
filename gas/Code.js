@@ -39,9 +39,24 @@ function doPost(e) {
 }
 
 function dispatchRpc(funcName, args, sessionContext) {
+  // Chỉ đăng nhập là endpoint công khai. Mọi lần đọc/ghi dữ liệu còn lại
+  // đều phải có phiên hợp lệ trước khi đi vào handler tương ứng.
+  if (funcName !== 'loginUser') {
+    sessionContext.__actor = validateSession_(sessionContext.sessionToken || '', sessionContext);
+  }
+
   switch (funcName) {
-    case 'apiGet':
+    case 'apiGet': {
+      const sheetName = args[0];
+      const base = getSheetPermissionMap_()[sheetName] || { module: sheetName, entityType: sheetName };
+      requirePermission_(sessionContext, {
+        module: base.module,
+        action: 'view',
+        auditAction: 'view',
+        entityType: base.entityType
+      }, '', null);
       return apiGet(args[0]);
+    }
     case 'apiAdd':
       return apiAdd(args[0], args[1], sessionContext);
     case 'apiUpdate':
@@ -50,6 +65,8 @@ function dispatchRpc(funcName, args, sessionContext) {
       return apiDelete(args[0], args[1], sessionContext);
     case 'loginUser':
       return loginUser(args[0], args[1], sessionContext);
+    case 'validateSession':
+      return sessionContext.__actor;
     case 'logoutUser':
       return logoutUser(sessionContext.sessionToken || args[0], sessionContext);
     case 'changeMyPassword':
@@ -62,6 +79,23 @@ function dispatchRpc(funcName, args, sessionContext) {
       return addVipPatientSafe(args[0], sessionContext);
     case 'getDoctors':
       return getDoctors();
+    case 'getPersonnelLists':
+      return getPersonnelLists();
+    case 'getBriefingBundle':
+      return getBriefingBundle();
+    case 'getDashboardOperationsData':
+      return getDashboardOperationsData();
+    case 'getNursingTasks':
+      requirePermission_(sessionContext, { module: 'dieu_duong', action: 'view', auditAction: 'view', entityType: 'NursingTask' }, '', null);
+      return getNursingTasks(args[0], args[1]);
+    case 'batchAddNursingTasks':
+      return batchAddNursingTasks(args[0], sessionContext);
+    case 'getMyAccess':
+      return getMyAccess(sessionContext);
+    case 'setPermissionEnforcement':
+      return setPermissionEnforcement(Boolean(args[0]), sessionContext);
+    case 'getRecentAuditLogs':
+      return getRecentAuditLogs(args[0], sessionContext);
     case 'batchSaveDailyOnCall':
       return batchSaveDailyOnCall(args[0], sessionContext);
     case 'saveRolePermissions':
@@ -77,7 +111,15 @@ function getSheet(name) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(name);
   if (!sheet) {
-    throw new Error(`Sheet "${name}" not found. Please run initialization.`);
+    // Chỉ tự tạo các sheet đã khai báo cấu trúc; tên lạ từ client vẫn bị từ chối.
+    const headers = getKnownSheetHeaders()[name];
+    if (!headers || !headers.length) {
+      throw new Error(`Sheet "${name}" not found. Please run initialization.`);
+    }
+    sheet = ss.insertSheet(name);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    return sheet;
   }
   ensureKnownSheetColumns(sheet, name);
   return sheet;
@@ -108,7 +150,8 @@ function getKnownSheetHeaders() {
       'TreatingDoctor', 'AdmissionDate', 'Notes', 'SurgeryDate', 'Surgeon', 'SurgeryMethod',
       'AssistantSurgeon1', 'AssistantSurgeon2', 'AssistantSurgeon3', 'Anesthetist',
       'AnesthetistAssistant', 'ScrubNurse', 'ApprovalDate', 'ApprovalNote', 'ActualSurgeryDate',
-      'SurgeryClassification', 'InterventionType', 'ActivityType', 'PhoneNumber', 'DischargeDate'
+      'SurgeryClassification', 'InterventionType', 'ActivityType', 'PhoneNumber', 'DischargeDate',
+      'SurgeryService', 'SurgeryType', 'CCCD', 'BHYTCode'
     ],
     BN_LuuY: ['ID', 'PatientId', 'Priority', 'Reason', 'Room', 'Bed'],
     GiaoBan_Log: ['ID', 'Date', 'Host', 'Content', 'CongViecJson', 'Notes'],
@@ -134,7 +177,8 @@ function getKnownSheetHeaders() {
       'sourceDate',
       'sourceLabel',
       'syncStatus',
-      'syncedAt'
+      'syncedAt',
+      'NgayHoanThanh'
     ],
     DanhGia_NhanVien: [
       'ID',
@@ -151,7 +195,15 @@ function getKnownSheetHeaders() {
       'XepLoai',
       'NhanXet',
       'NguoiDanhGia',
-      'NgayDanhGia'
+      'NgayDanhGia',
+      'DiemChuyenMon',
+      'NhomDanhGia',
+      'DiemGoiY',
+      'SoLieuJson',
+      'TuDanhGiaJson',
+      'TrangThai',
+      'NgayXacNhan',
+      'YKienNhanVien'
     ],
     May_Moc: ['ID', 'Name', 'Code', 'InCharge', 'PurchaseDate', 'LastMaintenanceDate', 'MaintenanceCycle', 'Condition', 'Notes'],
     Thuoc_Kho: ['ID', 'Name', 'Content', 'Quantity', 'Unit', 'ExpiryDate', 'Notes'],
@@ -161,6 +213,8 @@ function getKnownSheetHeaders() {
     DanhGia_5S: ['ID', 'ZoneId', 'Date', 'Assessor', 'Score', 'Comments'],
     CaiTien_5S: ['ID', 'ZoneId', 'Content', 'Proposer', 'Status', 'Result'],
     Phan_Truc_Ngay: ['ID', 'Date', 'Doctor', 'Nurse1', 'Nurse2', 'Note'],
+    CongTac_DieuDuong: ['ID', 'Date', 'Shift', 'Task', 'Status', 'Assignee', 'Priority', 'Note', 'CreatedBy', 'UpdatedAt'],
+    Config: ['Key', 'Value', 'Description'],
     Logs: ['ID', 'Timestamp', 'User', 'Action', 'Target', 'Detail'],
     AuditLogs: [
       'id',
@@ -306,6 +360,7 @@ function getAuditSheetInfo_(sheetName) {
     Phan_Truc_Ngay: { module: 'nursing', entityType: 'DailyOnCall', labelFields: ['date', 'doctor'] },
     KyThuat_Moi: { module: 'new_techniques', entityType: 'NewTechnique', labelFields: ['name'] },
     NoiDung_TT: { module: 'communication', entityType: 'CommunicationContent', labelFields: ['title'] },
+    CongTac_DieuDuong: { module: 'nursing_tasks', entityType: 'NursingTask', labelFields: ['task', 'date', 'shift'] },
     Config: { module: 'config', entityType: 'Config', labelFields: ['key'] }
   };
 
@@ -604,7 +659,7 @@ function buildStaffTaskFromBriefing_(briefingId, briefing, task, index, existing
     nguoiGiao: String(briefing.host || ''),
     ngayGiao: briefingDate || new Date().toISOString().split('T')[0],
     hanHoanThanh: String(task.deadline || ''),
-    mucDoUuTien: existing && existing.mucDoUuTien ? existing.mucDoUuTien : 'Trung bÃ¬nh',
+    mucDoUuTien: existing && existing.mucDoUuTien ? existing.mucDoUuTien : 'Trung bình',
     trangThai: existing && existing.trangThai ? existing.trangThai : 'ChÆ°a lÃ m',
     tienDo: existing && existing.tienDo !== undefined && existing.tienDo !== '' ? existing.tienDo : 0,
     ketQua: existing && existing.ketQua ? existing.ketQua : '',
@@ -693,7 +748,7 @@ function syncBriefingTasksToStaffTasks_(briefing, context) {
           const note = String(existing.ghiChu || '');
           const removedNote = 'Da bo khoi giao ban';
           const saved = internalUpdateRow_('CongViec_NhanVien', existing.id, {
-            trangThai: 'Táº¡m dá»«ng',
+            trangThai: 'Tạm dừng',
             ghiChu: note.indexOf(removedNote) >= 0 ? note : (note ? note + '\n' + removedNote : removedNote),
             syncStatus: 'orphaned',
             syncedAt: new Date().toISOString()
@@ -912,7 +967,10 @@ function validateSession_(sessionToken, meta) {
     username: user.username || session.username || '',
     fullName: user.fullName || session.fullName || '',
     role: normalizeRole_(user.role || session.role),
-    mustChangePassword: toBool(user.mustChangePassword)
+    mustChangePassword: toBool(user.mustChangePassword),
+    canDeletePatient: toBool(user.canDeletePatient),
+    permissionsEnforced: isPermissionEnforced_(),
+    denied: computeDeniedPermissions_({ role: user.role || session.role })
   };
 }
 
@@ -1174,7 +1232,14 @@ function findMutableRowIndex_(sheetName, sheet, map, id) {
     return -1;
   }
 
+  // Sheet Config dùng cột Key làm khóa chính (không có cột ID).
+  if (sheetName === 'Config') return findSheetRowByKey_(sheet, map, 'key', id);
+
   return findSheetRowByKey_(sheet, map, 'id', id);
+}
+
+function sheetUsesKeyColumn_(sheetName) {
+  return sheetName === 'Users' || sheetName === 'Config';
 }
 
 function isUserActive_(user) {
@@ -1218,7 +1283,10 @@ function mapMutationToPermission_(sheetName, action, payload) {
   const permissionAction = normalizePermissionAction_(action);
   const auditAction = classifyAuditAction_(sheetName, action, payload || {}, null, null);
 
-  if (sheetName === 'DS_BenhNhan' && permissionAction === 'edit' && payload && (payload.status === 'DaDuyet' || payload.approvalDate)) {
+  // Chỉ classify thành surgery khi đang duyệt mổ lần đầu (status mới = DaDuyet).
+  // KHÔNG dựa vào payload.approvalDate vì payload có thể chứa approvalDate cũ
+  // từ bệnh nhân đã được duyệt trước đó (ví dụ: thao tác ra viện).
+  if (sheetName === 'DS_BenhNhan' && permissionAction === 'edit' && payload && payload.status === 'DaDuyet') {
     return { module: 'surgery', action: 'edit', auditAction: 'approve', entityType: base.entityType };
   }
 
@@ -1247,10 +1315,13 @@ function getPermissionValue_(permission, action) {
   return false;
 }
 
+let rolePermissionsMemo_ = null;
+
 function findPermissionForRole_(role, moduleName) {
   let permissions = [];
   try {
-    permissions = apiGet('Roles_Permission');
+    if (!rolePermissionsMemo_) rolePermissionsMemo_ = apiGet('Roles_Permission');
+    permissions = rolePermissionsMemo_;
   } catch (err) {
     return null;
   }
@@ -1336,18 +1407,114 @@ function logPermissionDenied_(context, permission, entityId, payload, errorMessa
   }));
 }
 
+// ---- Kiểm soát quyền chi tiết theo ma trận Roles_Permission (bật/tắt bằng Config) ----
+const PERMISSION_ENFORCE_KEY_ = 'PHAN_QUYEN_CHI_TIET';
+const PERMISSION_MODULES_ = ['clinical', 'surgery', 'vip', 'research', 'meetings', 'briefing', 'technique', 'comms', 'inventory', '5s', 'shifts', 'dieu_duong', 'staff_performance'];
+const PERMISSION_ACTIONS_ = ['view', 'add', 'edit', 'delete'];
+let permissionEnforcedMemo_ = null;
+
+function readConfigValue_(key) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+  if (!sheet || sheet.getLastRow() < 2) return '';
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(function(h) { return String(h).trim().toLowerCase(); });
+  const keyCol = headers.indexOf('key');
+  const valueCol = headers.indexOf('value');
+  if (keyCol === -1 || valueCol === -1) return '';
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][keyCol]).trim().toUpperCase() === key) return String(values[i][valueCol]).trim();
+  }
+  return '';
+}
+
+function isPermissionEnforced_() {
+  if (permissionEnforcedMemo_ !== null) return permissionEnforcedMemo_;
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(PERMISSION_ENFORCE_KEY_);
+  if (cached !== null) {
+    permissionEnforcedMemo_ = cached === '1';
+    return permissionEnforcedMemo_;
+  }
+  let enforced = false;
+  try {
+    enforced = ['BAT', 'ON', '1', 'TRUE'].indexOf(readConfigValue_(PERMISSION_ENFORCE_KEY_).toUpperCase()) !== -1;
+  } catch (err) {
+    enforced = false;
+  }
+  cache.put(PERMISSION_ENFORCE_KEY_, enforced ? '1' : '0', 60);
+  permissionEnforcedMemo_ = enforced;
+  return enforced;
+}
+
+/** Danh sách "module:action" bị từ chối với người dùng (rỗng khi chưa bật kiểm soát hoặc là Trưởng khoa). */
+function computeDeniedPermissions_(actor) {
+  if (!isPermissionEnforced_() || !actor || normalizeRole_(actor.role) === 'TRUONG_KHOA') return [];
+  const denied = [];
+  PERMISSION_MODULES_.forEach(function(moduleName) {
+    PERMISSION_ACTIONS_.forEach(function(action) {
+      if (!canActorPerform_(actor, moduleName, action)) denied.push(moduleName + ':' + action);
+    });
+  });
+  return denied;
+}
+
+function getMyAccess(sessionContext) {
+  const actor = sessionContext.__actor;
+  return { enforced: isPermissionEnforced_(), denied: computeDeniedPermissions_(actor) };
+}
+
+function setPermissionEnforcement(enabled, sessionContext) {
+  requirePermission_(sessionContext, { module: 'permissions', action: 'edit', auditAction: 'update', entityType: 'Permission' }, PERMISSION_ENFORCE_KEY_, { enabled: enabled });
+  const value = enabled ? 'BAT' : 'TAT';
+  const sheet = getSheet('Config');
+  const { map, headers } = getHeaderIndexMap(sheet);
+  const rowIndex = findSheetRowByKey_(sheet, map, 'key', PERMISSION_ENFORCE_KEY_);
+  const before = readConfigValue_(PERMISSION_ENFORCE_KEY_);
+  if (rowIndex === -1) {
+    sheet.appendRow(headers.map(function(h) {
+      const key = toCamelCase(h);
+      if (key === 'key') return PERMISSION_ENFORCE_KEY_;
+      if (key === 'value') return value;
+      if (key === 'description') return 'Bật kiểm soát quyền chi tiết theo ma trận phân quyền (BAT/TAT)';
+      return '';
+    }));
+  } else {
+    sheet.getRange(rowIndex, map['value'] + 1).setValue(value);
+  }
+  CacheService.getScriptCache().remove(PERMISSION_ENFORCE_KEY_);
+  permissionEnforcedMemo_ = null;
+  logAuditEvent_(Object.assign({}, getActorInfo_(sessionContext), {
+    module: 'permissions',
+    action: 'update',
+    entityType: 'Config',
+    entityId: PERMISSION_ENFORCE_KEY_,
+    entityLabel: 'Kiểm soát quyền chi tiết',
+    source: 'gas:setPermissionEnforcement',
+    beforeJson: '',
+    afterJson: '',
+    changesJson: safeJsonStringify_({ value: { before: before || 'TAT', after: value } }),
+    status: 'success',
+    errorMessage: ''
+  }));
+  return { enforced: !!enabled };
+}
+
 function requirePermission_(context, permission, entityId, payload) {
   if (!permission || !permission.module) return getActorFromContext_(context);
   if (context && context.system) return getActorFromContext_(context);
 
-  let actor = null;
+  let actor = context && context.__actor ? context.__actor : null;
 
-  try {
-    actor = validateSession_(context && context.sessionToken ? context.sessionToken : '', context);
-    if (context && typeof context === 'object') context.__actor = actor;
-  } catch (err) {
-    logPermissionDenied_(context, permission, entityId, payload, err && err.code ? err.code : 'AUTH_REQUIRED');
-    throw err;
+  // dispatchRpc đã xác thực phiên và gắn __actor. Tái sử dụng kết quả đó để
+  // tránh đọc Users/Sessions và ghi lastSeen thêm một lần cho mỗi request.
+  if (!actor) {
+    try {
+      actor = validateSession_(context && context.sessionToken ? context.sessionToken : '', context);
+      if (context && typeof context === 'object') context.__actor = actor;
+    } catch (err) {
+      logPermissionDenied_(context, permission, entityId, payload, err && err.code ? err.code : 'AUTH_REQUIRED');
+      throw err;
+    }
   }
 
   if (actor.mustChangePassword) {
@@ -1357,19 +1524,13 @@ function requirePermission_(context, permission, entityId, payload) {
     throw error;
   }
 
-  let verifiedUser = null;
-
-  if (actor.username) {
-    verifiedUser = getUserByUsername_(actor.username);
-    if (!verifiedUser || !isUserActive_(verifiedUser)) {
-      logPermissionDenied_(context, permission, entityId, payload, 'PERMISSION_DENIED: inactive or unknown user');
-      throw makePermissionDeniedError_();
-    }
-    actor.role = normalizeRole_(verifiedUser.role || actor.role);
-    actor.fullName = verifiedUser.fullName || actor.fullName;
+  if (isAdminOnlyModule_(permission.module) && !canActorPerform_(actor, permission.module, permission.action)) {
+    logPermissionDenied_(context, permission, entityId, payload, 'PERMISSION_DENIED');
+    throw makePermissionDeniedError_();
   }
 
-  if (isAdminOnlyModule_(permission.module) && !canActorPerform_(actor, permission.module, permission.action)) {
+  const moduleKey = normalizePermissionModule_(permission.module);
+  if (PERMISSION_MODULES_.indexOf(moduleKey) !== -1 && isPermissionEnforced_() && !canActorPerform_(actor, moduleKey, permission.action)) {
     logPermissionDenied_(context, permission, entityId, payload, 'PERMISSION_DENIED');
     throw makePermissionDeniedError_();
   }
@@ -1496,6 +1657,15 @@ function apiAdd(sheetName, data, userRole) {
        }
     }
 
+    if (sheetName === 'Config') {
+      const configKey = String((data && data.key) || '').trim();
+      if (!configKey) throw new Error('Mã cấu hình (Key) là bắt buộc');
+      if (findSheetRowByKey_(sheet, map, 'key', configKey) !== -1) {
+        throw new Error("Mã cấu hình '" + configKey + "' đã tồn tại!");
+      }
+      id = configKey;
+    }
+
     const newRow = headers.map(h => {
       const key = toCamelCase(h);
       if (key === 'id') return id;
@@ -1564,7 +1734,7 @@ function apiUpdate(sheetName, id, data, userRole) {
     const { map, headers } = getHeaderIndexMap(sheet);
     const colIndexID = map['id'];
     
-    if (sheetName !== 'Users' && colIndexID === undefined) throw new Error(`Sheet ${sheetName} missing ID column`);
+    if (!sheetUsesKeyColumn_(sheetName) && colIndexID === undefined) throw new Error(`Sheet ${sheetName} missing ID column`);
     
     // Find Row
     const lastRow = sheet.getLastRow();
@@ -1644,7 +1814,7 @@ function apiDelete(sheetName, id, userRole) {
     const { map, headers } = getHeaderIndexMap(sheet);
     const colIndexID = map['id'];
     
-    if (sheetName !== 'Users' && colIndexID === undefined) throw new Error("Missing ID column");
+    if (!sheetUsesKeyColumn_(sheetName) && colIndexID === undefined) throw new Error("Missing ID column");
     
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) throw new Error("Record not found");
@@ -1738,7 +1908,8 @@ function loginUser(username, password, sessionContext) {
     return {
       user: safeUser,
       sessionToken: session.sessionToken,
-      expiresAt: session.expiresAt
+      expiresAt: session.expiresAt,
+      access: { enforced: isPermissionEnforced_(), denied: computeDeniedPermissions_(safeUser) }
     };
   }
   logAuditEvent_({
@@ -1825,6 +1996,155 @@ function getDoctors() {
     .map(u => ({ id: u.id, fullName: u.fullName }));
 }
 
+function getPersonnelLists() {
+  const users = apiGet('Users').filter(isUserActive_);
+  const allNames = users.map(function(user) { return user.fullName; }).filter(Boolean);
+  const doctors = users
+    .filter(function(user) {
+      const username = String(user.username || '').toLowerCase();
+      return user.nhomChuyenMon === 'BS' || username.indexOf('bs') === 0 || normalizeRole_(user.role) === 'TRUONG_KHOA';
+    })
+    .map(function(user) { return user.fullName; })
+    .filter(Boolean);
+  const nurses = users
+    .filter(function(user) {
+      const username = String(user.username || '').toLowerCase();
+      return user.nhomChuyenMon === 'DD' || username.indexOf('dd') === 0 || normalizeRole_(user.role) === 'DIEU_DUONG_TRUONG';
+    })
+    .map(function(user) { return user.fullName; })
+    .filter(Boolean);
+
+  return {
+    doctors: Array.from(new Set(doctors.length ? doctors : allNames)),
+    nurses: Array.from(new Set(nurses.length ? nurses : allNames))
+  };
+}
+
+function getBriefingBundle() {
+  const users = apiGet('Users')
+    .filter(isUserActive_)
+    .map(function(user) {
+      return {
+        username: user.username || '',
+        fullName: user.fullName || ''
+      };
+    })
+    .filter(function(user) { return user.username && user.fullName; });
+
+  return {
+    briefings: apiGet('GiaoBan_Log'),
+    users: users
+  };
+}
+
+function getDashboardOperationsData() {
+  const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return {
+    staffTasks: apiGet('CongViec_NhanVien'),
+    medicines: apiGet('Thuoc_Kho'),
+    equipment: apiGet('May_Moc'),
+    improvements: apiGet('CaiTien_5S'),
+    evaluations5S: apiGet('DanhGia_5S'),
+    shifts: apiGet('Phan_Truc_Ngay'),
+    // Các trường bổ sung cho giao diện v2; lỗi ở đây không được làm hỏng cả bảng điều hành.
+    meetings: safeApiGet_('SinhHoat_KH'),
+    research: safeApiGet_('DeTai_CoSo'),
+    nursingTasks: safeCall_(function() { return getNursingTasksBetween_(today, today); }, [])
+  };
+}
+
+function safeCall_(fn, fallback) {
+  try {
+    return fn();
+  } catch (err) {
+    console.warn('safeCall_ failed:', err && err.message ? err.message : err);
+    return fallback;
+  }
+}
+
+function safeApiGet_(sheetName) {
+  return safeCall_(function() { return apiGet(sheetName); }, []);
+}
+
+function normalizeSheetDateKey_(value) {
+  if (value instanceof Date) return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const raw = String(value || '').trim();
+  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return iso[1] + '-' + ('0' + iso[2]).slice(-2) + '-' + ('0' + iso[3]).slice(-2);
+  const vn = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+  if (vn) return vn[3] + '-' + ('0' + vn[2]).slice(-2) + '-' + ('0' + vn[1]).slice(-2);
+  return raw;
+}
+
+function getNursingTasksBetween_(fromDate, toDate) {
+  const from = normalizeSheetDateKey_(fromDate);
+  const to = normalizeSheetDateKey_(toDate || fromDate);
+  return apiGet('CongTac_DieuDuong')
+    .map(function(task) { return Object.assign({}, task, { date: normalizeSheetDateKey_(task.date) }); })
+    .filter(function(task) { return (!from || task.date >= from) && (!to || task.date <= to); });
+}
+
+function getNursingTasks(fromDate, toDate) {
+  return getNursingTasksBetween_(fromDate, toDate);
+}
+
+function batchAddNursingTasks(tasks, sessionContext) {
+  requirePermission_(sessionContext, { module: 'dieu_duong', action: 'add', auditAction: 'create', entityType: 'NursingTask' }, '', null);
+  if (!Array.isArray(tasks) || !tasks.length) return { success: true, ids: [] };
+  if (tasks.length > 100) throw new Error('Tối đa 100 việc mỗi lần thêm.');
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('Server is busy. Please try again.');
+  try {
+    const sheet = getSheet('CongTac_DieuDuong');
+    const { headers } = getHeaderIndexMap(sheet);
+    const ids = [];
+    const rows = tasks.map(function(task) {
+      const id = Utilities.getUuid();
+      ids.push(id);
+      return headers.map(function(header) {
+        const key = toCamelCase(header);
+        if (key === 'id') return id;
+        let value = task ? task[key] : '';
+        if (value === undefined || value === null) return '';
+        if (typeof value === 'string' && value.charAt(0) === '=') value = "'" + value;
+        return value;
+      });
+    });
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
+    logAuditEvent_(Object.assign({}, getActorInfo_(sessionContext), {
+      module: 'nursing_tasks',
+      action: 'batch_create',
+      entityType: 'NursingTask',
+      entityId: '',
+      entityLabel: rows.length + ' việc điều dưỡng',
+      source: 'gas:batchAddNursingTasks',
+      beforeJson: '',
+      afterJson: safeJsonStringify_(tasks),
+      changesJson: '',
+      status: 'success',
+      errorMessage: ''
+    }));
+    return { success: true, ids: ids };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getRecentAuditLogs(options, sessionContext) {
+  requirePermission_(sessionContext, { module: 'config', action: 'view', auditAction: 'view', entityType: 'AuditLog' }, '', null);
+  const limit = Math.max(1, Math.min(1000, Number(options && options.limit) || 300));
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('AuditLogs');
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const startRow = Math.max(2, lastRow - limit + 1);
+  const rows = sheet.getRange(startRow, 1, lastRow - startRow + 1, lastCol).getValues();
+  return rows.map(function(row) { return rowToObject(row, headers); }).reverse();
+}
+
 function getDashboardOverview() {
   const patients = apiGet('DS_BenhNhan');
   const shifts = apiGet('Phan_Truc_Ngay');
@@ -1840,6 +2160,19 @@ function getDashboardOverview() {
     vip: apiGet('BN_LuuY').length,
     discharged: patients.filter(p => p.status === 'RaVien').length
   };
+
+  const currentMonthKey = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM');
+  const validSurgeryClassifications = ['DAC_BIET', 'LOAI_I', 'LOAI_II', 'LOAI_III', 'Đặc biệt', 'Loại I', 'Loại II', 'Loại III'];
+  const monthSurgeryPatients = patients.filter(function(patient) {
+    const actualDate = String(patient.actualSurgeryDate || '').trim();
+    if (!actualDate || actualDate.slice(0, 7) !== currentMonthKey) return false;
+
+    const service = String(patient.surgeryService || patient.interventionType || '').trim().toUpperCase();
+    if (service.indexOf('RFA') !== -1) return false;
+
+    const classification = String(patient.surgeryType || patient.surgeryClassification || '').trim();
+    return validSurgeryClassifications.indexOf(classification) !== -1;
+  });
   
   const timezone = Session.getScriptTimeZone();
   const today = new Date();
@@ -2028,7 +2361,10 @@ function getDashboardOverview() {
 
   return {
     clinical,
-    surgery: { monthTotal: 0, approved: 0 },
+    surgery: {
+      monthTotal: monthSurgeryPatients.length,
+      approved: patients.filter(function(patient) { return patient.status === 'DaDuyet'; }).length
+    },
     science: { ongoing: research.filter(r => r.progress < 100).length, meetingsMonth: 0 },
     admin: { briefingToday: briefingToday ? briefingToday.content : null, overdueTasks: 0 },
     inventory: { medsNearExpiry, equipOverdue },

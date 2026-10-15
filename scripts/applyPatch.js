@@ -27,6 +27,8 @@ async function checkAndAddColumns() {
     { column: 'surgery_classification', testValue: null },
     { column: 'intervention_type', testValue: null },
     { column: 'activity_type', testValue: null },
+    { column: 'surgery_service', testValue: null },
+    { column: 'surgery_type', testValue: null },
   ];
 
   for (const { column } of columnsToCheck) {
@@ -73,6 +75,8 @@ async function checkAndAddColumns() {
         surgery_classification: 'VARCHAR(100)',
         intervention_type: 'VARCHAR(255)',
         activity_type: 'VARCHAR(100)',
+        surgery_service: 'VARCHAR(100)',
+        surgery_type: 'VARCHAR(100)',
       };
       return `  ADD COLUMN IF NOT EXISTS ${col} ${typeMap[col] || 'TEXT'}`;
     });

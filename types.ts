@@ -28,6 +28,9 @@ export interface Patient {
   dob: string;
   gender: 'Nam' | 'Nữ';
   phoneNumber?: string; // NEW: Phone Number
+  address?: string;     // Địa chỉ bệnh nhân
+  cccd?: string;
+  bhytCode?: string;
   room: string;
   bed: string;
   treatmentType: 'Noi' | 'Ngoai';
@@ -54,7 +57,9 @@ export interface Patient {
   // Post-op Actual Data (Đã mổ - For Statistics)
   actualSurgeryDate?: string;     // NgayPhauThuat (Actual)
   surgeryMethod?: string;         // CachThucPhauThuat (Free text: "TOETVA", "Mổ mở"...)
-  surgeryClassification?: 'Đặc biệt' | 'Loại I' | 'Loại II' | 'Loại III'; // LoaiPhauThuat (Enum)
+  surgeryService?: string; // Mã canonical mới hoặc nhãn legacy
+  surgeryType?: string; // Mã canonical mới hoặc nhãn legacy
+  surgeryClassification?: 'Đặc biệt' | 'Loại I' | 'Loại II' | 'Loại III' | ''; // LoaiPhauThuat (Enum)
   interventionType?: string;      // LoaiCanThiep (Enum: Mổ K giáp, Basedow...)
   activityType?: 'Phẫu thuật' | 'Thủ thuật'; // LoaiHoatDong (Derived)
 }
@@ -188,6 +193,22 @@ export interface DailyOnCall {
     note?: string;
 }
 
+export type NursingShift = 'Sáng' | 'Chiều' | 'Đêm';
+export type NursingTaskStatus = 'Chưa làm' | 'Đang làm' | 'Hoàn thành';
+
+export interface NursingTask {
+    id: string;
+    date: string; // YYYY-MM-DD
+    shift: NursingShift | string;
+    task: string;
+    status: NursingTaskStatus | string;
+    assignee?: string;
+    priority?: 'Thường' | 'Ưu tiên' | 'Khẩn' | string;
+    note?: string;
+    createdBy?: string;
+    updatedAt?: string;
+}
+
 export interface SystemConfig {
     key: string;
     value: string;
@@ -243,6 +264,7 @@ export interface LoginResult {
     user: User;
     sessionToken: string;
     expiresAt: string;
+    clinicalProof?: string;
 }
 
 export interface StaffTask {
@@ -268,6 +290,8 @@ export interface StaffTask {
     sourceLabel?: string;
     syncStatus?: string;
     syncedAt?: string;
+    /** Ngày chuyển sang "Hoàn thành" (YYYY-MM-DD) — dùng để tính đúng hạn. */
+    ngayHoanThanh?: string;
 }
 
 export interface StaffEvaluation {
@@ -281,11 +305,24 @@ export interface StaffEvaluation {
     diemKyLuat: number | string;
     diemPhoiHop: number | string;
     diemSangKien: number | string;
+    /** Chuyên môn (BS) / kỹ thuật chăm sóc (ĐD). Bản đánh giá cũ không có. */
+    diemChuyenMon?: number | string;
     diemTong: number | string;
     xepLoai: string;
     nhanXet?: string;
     nguoiDanhGia: string;
     ngayDanhGia: string;
+    /** Bộ tiêu chí áp dụng: BS | DD | KHAC. Trống = bộ tiêu chí cũ (5 tiêu chí, trọng số đều). */
+    nhomDanhGia?: string;
+    /** Điểm "Hoàn thành công việc" hệ thống gợi ý từ số liệu công việc của kỳ. */
+    diemGoiY?: number | string;
+    /** Ảnh chụp số liệu công việc của kỳ lúc đánh giá (JSON). */
+    soLieuJson?: string;
+    /** Phần nhân viên tự đánh giá (JSON: { scores, nhanXet, ngay }). */
+    tuDanhGiaJson?: string;
+    trangThai?: string;
+    ngayXacNhan?: string;
+    yKienNhanVien?: string;
 }
 
 export const STAFF_PERFORMANCE_PERMISSION_KEY = 'staff_performance';

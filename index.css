@@ -1,3 +1,123 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ===== Design tokens (RGB channels để dùng được với opacity của Tailwind) ===== */
+@layer base {
+  :root {
+    --canvas: 243 245 248;
+    --surface: 255 255 255;
+    --sunken: 248 250 252;
+    --line: 226 232 240;
+    --fg: 15 23 42;
+    --muted: 92 105 125;
+    --faint: 148 163 184;
+    --primary: 15 118 110;
+    --primary-strong: 17 94 89;
+    --primary-soft: 230 244 242;
+    --primary-fg: 255 255 255;
+    color-scheme: light;
+  }
+
+  .dark {
+    --canvas: 9 14 24;
+    --surface: 17 24 39;
+    --sunken: 13 19 32;
+    --line: 36 47 66;
+    --fg: 230 236 245;
+    --muted: 154 166 186;
+    --faint: 100 116 139;
+    --primary: 45 212 191;
+    --primary-strong: 94 234 212;
+    --primary-soft: 19 52 54;
+    --primary-fg: 4 30 28;
+    color-scheme: dark;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-canvas text-fg font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  ::selection {
+    background: rgb(var(--primary) / 0.22);
+  }
+
+  input[type='date']::-webkit-calendar-picker-indicator,
+  input[type='month']::-webkit-calendar-picker-indicator,
+  input[type='datetime-local']::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.6;
+  }
+
+  .dark input[type='date']::-webkit-calendar-picker-indicator,
+  .dark input[type='month']::-webkit-calendar-picker-indicator,
+  .dark input[type='datetime-local']::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--primary) / 0.6);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-card;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-fg placeholder:text-faint
+      transition-colors focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/15
+      disabled:cursor-not-allowed disabled:bg-sunken disabled:text-muted;
+  }
+
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-fg/80;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--faint) / 0.5) transparent;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded-lg bg-line/60;
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgb(var(--surface) / 0.6), transparent);
+    animation: shimmer 1.4s infinite;
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

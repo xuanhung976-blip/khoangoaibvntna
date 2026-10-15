@@ -34,7 +34,7 @@ function getDetectedSchemas() {
         'Anesthetist', 'AnesthetistAssistant', 'ScrubNurse',
         'ApprovalDate', 'ApprovalNote',
         'ActualSurgeryDate', 'SurgeryClassification', 'InterventionType', 'ActivityType',
-        'PhoneNumber', 'DischargeDate' // NEW: Phone and Discharge
+        'SurgeryService', 'SurgeryType', 'PhoneNumber', 'DischargeDate', 'CCCD', 'BHYTCode'
       ]
     },
     {
@@ -67,7 +67,7 @@ function getDetectedSchemas() {
         'ID', 'UserId', 'TieuDe', 'NoiDung', 'NguoiGiao', 'NgayGiao', 'HanHoanThanh',
         'MucDoUuTien', 'TrangThai', 'TienDo', 'KetQua', 'GhiChu', 'sourceType',
         'sourceId', 'sourceTaskId', 'sourceTaskIndex', 'assigneeUsername',
-        'assigneeName', 'sourceDate', 'sourceLabel', 'syncStatus', 'syncedAt'
+        'assigneeName', 'sourceDate', 'sourceLabel', 'syncStatus', 'syncedAt', 'NgayHoanThanh'
       ]
     },
     {
@@ -75,7 +75,9 @@ function getDetectedSchemas() {
       columns: [
         'ID', 'UserId', 'LoaiDanhGia', 'Quy', 'Nam', 'DiemHoanThanhCongViec',
         'DiemThaiDo', 'DiemKyLuat', 'DiemPhoiHop', 'DiemSangKien', 'DiemTong',
-        'XepLoai', 'NhanXet', 'NguoiDanhGia', 'NgayDanhGia'
+        'XepLoai', 'NhanXet', 'NguoiDanhGia', 'NgayDanhGia', 'DiemChuyenMon',
+        'NhomDanhGia', 'DiemGoiY', 'SoLieuJson', 'TuDanhGiaJson', 'TrangThai',
+        'NgayXacNhan', 'YKienNhanVien'
       ]
     },
     {
@@ -104,7 +106,7 @@ function getDetectedSchemas() {
     },
     {
       name: 'CongTac_DieuDuong',
-      columns: ['ID', 'Date', 'Shift', 'Task', 'Status']
+      columns: ['ID', 'Date', 'Shift', 'Task', 'Status', 'Assignee', 'Priority', 'Note', 'CreatedBy', 'UpdatedAt']
     },
     {
       name: 'Logs',

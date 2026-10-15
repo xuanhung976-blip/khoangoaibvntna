@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { createClinicalSessionProof } from '../utils/serverSessionProof.js';
+
 declare const process: {
   env: Record<string, string | undefined>;
 };
@@ -18,19 +21,24 @@ type CacheEntry = {
 const rpcCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 60 * 1000; // 60 seconds TTL for read requests
 
-function getCacheKey(funcName: string, args: any[]): string | null {
+function getCacheKey(funcName: string, args: any[], sessionToken: string): string | null {
   const readFuncs = [
     'apiGet',
     'getDoctors',
     'getVipPatientsJoined',
     'getDashboardOverview',
     'getPersonnelLists',
+    'getBriefingBundle',
+    'getDashboardOperationsData',
     'getBriefings',
     'getPermissions',
+    'getNursingTasks',
   ];
 
   if (!readFuncs.includes(funcName)) return null;
-  return `${funcName}:${JSON.stringify(args)}`;
+  if (!sessionToken) return null;
+  const sessionKey = createHash('sha256').update(sessionToken).digest('hex').slice(0, 24);
+  return `${sessionKey}:${funcName}:${JSON.stringify(args)}`;
 }
 
 function isWriteFunction(funcName: string): boolean {
@@ -44,6 +52,7 @@ function isWriteFunction(funcName: string): boolean {
     'changeMyPassword',
     'resetUserPassword',
     'toggleLockUser',
+    'batchAddNursingTasks',
   ];
   return writeFuncs.includes(funcName);
 }
@@ -54,10 +63,32 @@ function invalidateCache(funcName: string, args: any[]) {
   const targetSheet = args?.[0];
   if (targetSheet && typeof targetSheet === 'string') {
     for (const key of rpcCache.keys()) {
+      const affectsBriefingBundle =
+        (targetSheet === 'GiaoBan_Log' || targetSheet === 'Users') &&
+        key.includes(':getBriefingBundle:');
+      const dashboardSheets = [
+        'CongViec_NhanVien',
+        'Thuoc_Kho',
+        'May_Moc',
+        'CaiTien_5S',
+        'DanhGia_5S',
+        'Phan_Truc_Ngay',
+        'SinhHoat_KH',
+        'DeTai_CoSo',
+        'CongTac_DieuDuong',
+      ];
+      const affectsDashboardBundle =
+        dashboardSheets.includes(targetSheet) &&
+        key.includes(':getDashboardOperationsData:');
+      const affectsNursingRange =
+        targetSheet === 'CongTac_DieuDuong' && key.includes(':getNursingTasks:');
       if (
         key.includes(targetSheet) ||
-        key.startsWith('getVipPatientsJoined') ||
-        key.startsWith('getDashboardOverview')
+        key.includes(':getVipPatientsJoined:') ||
+        key.includes(':getDashboardOverview:') ||
+        affectsBriefingBundle ||
+        affectsDashboardBundle ||
+        affectsNursingRange
       ) {
         rpcCache.delete(key);
       }
@@ -162,16 +193,6 @@ export default async function handler(req: any, res: any) {
     invalidateCache(funcName, args);
   }
 
-  // Handle read functions -> check memory cache
-  const cacheKey = getCacheKey(funcName, args);
-  if (cacheKey && !bypassCache) {
-    const cached = rpcCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      jsonResponse(res, 200, cached.data);
-      return;
-    }
-  }
-
   const authHeader =
     typeof req?.headers?.authorization === 'string'
       ? req.headers.authorization
@@ -181,6 +202,18 @@ export default async function handler(req: any, res: any) {
     (authHeader.toLowerCase().startsWith('bearer ')
       ? authHeader.slice(7).trim()
       : '');
+
+  // Handle read functions -> check memory cache
+  // Khóa cache gắn với hash phiên đăng nhập để không dùng chéo dữ liệu giữa người dùng.
+  const cacheKey = getCacheKey(funcName, args, sessionToken);
+  if (cacheKey && !bypassCache) {
+    const cached = rpcCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      jsonResponse(res, 200, cached.data);
+      return;
+    }
+  }
+
   const forwardedFor =
     typeof req?.headers?.['x-forwarded-for'] === 'string'
       ? req.headers['x-forwarded-for'].split(',')[0].trim()
@@ -228,7 +261,28 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    const normalizedData = normalizeGasResponse(parsed);
+    let normalizedData = normalizeGasResponse(parsed);
+
+    // GAS đã xác thực thông tin đăng nhập. Ký một proof ngắn hạn ở server để
+    // /api/clinical có thể kiểm tra cục bộ, không phải gọi ngược GAS ngay sau login.
+    if (
+      funcName === 'loginUser' &&
+      normalizedData?.sessionToken &&
+      normalizedData?.user &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    ) {
+      const clinicalProof = createClinicalSessionProof(
+        normalizedData.sessionToken,
+        {
+          ...normalizedData.user,
+          permissionsEnforced: normalizedData.access?.enforced === true,
+          denied: Array.isArray(normalizedData.access?.denied) ? normalizedData.access.denied : [],
+        },
+        process.env.SUPABASE_SERVICE_ROLE_KEY,
+        { sessionExpiresAt: normalizedData.expiresAt },
+      );
+      if (clinicalProof) normalizedData = { ...normalizedData, clinicalProof };
+    }
 
     // Save successful read results to memory cache
     if (cacheKey && normalizedData && !(typeof normalizedData === 'object' && normalizedData.success === false)) {

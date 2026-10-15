@@ -1,12 +1,6 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Hệ thống quản lý Khoa Ngoại Tổng hợp
 
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/drive/1HRkkcoBrgSCqTrdMRtjTF-sEsq9wRAov
+Ứng dụng Vite/React sử dụng Google Apps Script cho xác thực và các phân hệ hành chính; dữ liệu lâm sàng đi qua API server trước khi truy cập Supabase.
 
 ## Run Locally
 
@@ -15,6 +9,6 @@ View your app in AI Studio: https://ai.studio/apps/drive/1HRkkcoBrgSCqTrdMRtjTF-
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Configure `GAS_API_URL`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY` on the server. Never expose the Supabase service key through a `VITE_*` variable.
 3. Run the app:
    `npm run dev`

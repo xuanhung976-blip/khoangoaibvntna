@@ -1,0 +1,401 @@
+/*
+ * Backend giả lập CHỈ dùng khi chạy dev với VITE_USE_MOCK=true.
+ * Dữ liệu mẫu nằm trong bộ nhớ trình duyệt (mất khi tải lại trang) — giúp kiểm thử
+ * giao diện mà không chạm vào Google Sheets / Supabase thật.
+ */
+import type { Patient } from '../types';
+
+type Row = Record<string, any>;
+
+const pad = (value: number) => String(value).padStart(2, '0');
+const keyOf = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+const today = new Date();
+const day = (offset: number) => {
+  const date = new Date(today);
+  date.setDate(date.getDate() + offset);
+  return keyOf(date);
+};
+let seq = 1000;
+const uid = (prefix: string) => `${prefix}_${++seq}`;
+
+const DOCTORS = ['BS. Nguyễn Xuân Hùng', 'BS. Trần Văn Minh', 'BS. Lê Thị Hoa', 'BS. Phạm Quốc Bảo', 'BS. Hoàng Đức Long'];
+const NURSES = ['ĐD. Nguyễn Thị Lan', 'ĐD. Trần Thu Hà', 'ĐD. Lê Văn Nam', 'ĐD. Phan Thị Mai', 'ĐD. Vũ Thị Thảo'];
+const NAMES = [
+  'Nguyễn Thị Hương', 'Trần Văn Bình', 'Lê Thị Thu', 'Phạm Văn Đức', 'Hoàng Thị Mai', 'Vũ Văn Long', 'Đặng Thị Ngọc', 'Bùi Văn Tuấn',
+  'Đỗ Thị Hạnh', 'Hồ Văn Sơn', 'Ngô Thị Lan', 'Dương Văn Hải', 'Lý Thị Kim', 'Phan Văn Toàn', 'Võ Thị Yến', 'Trịnh Văn Khoa',
+  'Mai Thị Huyền', 'Cao Văn Thắng', 'Lưu Thị Phương', 'Tạ Văn Quang', 'Đinh Thị Nga', 'Kiều Văn Phúc', 'Hà Thị Oanh', 'Châu Văn Lộc',
+];
+const DIAGNOSES = [
+  'Bướu giáp đa nhân 2 thùy', 'K tuyến giáp thể nhú T1N0M0', 'Basedow kháng điều trị nội khoa', 'Nhân giáp thùy phải TIRADS 4',
+  'Tăng tiết mồ hôi tay', 'Nang giáp thùy trái', 'K tuyến giáp di căn hạch cổ', 'Bướu giáp nhân thùy trái',
+];
+
+const services: Array<[string, string, string]> = [
+  ['TOETVA', 'LOAI_I', 'TOETVA cắt thùy tuyến giáp'],
+  ['K_GIAP', 'DAC_BIET', 'Cắt toàn bộ tuyến giáp + nạo vét hạch cổ trung tâm'],
+  ['BASEDOW', 'LOAI_I', 'Cắt gần toàn bộ tuyến giáp'],
+  ['CAT_1_THUY', 'LOAI_II', 'Cắt 1 thùy + eo tuyến giáp'],
+  ['RFA', '', 'Đốt sóng cao tần (RFA) nhân tuyến giáp'],
+  ['ETS', 'LOAI_II', 'Phẫu thuật nội soi đốt hạch giao cảm ngực 2 bên'],
+];
+
+const buildPatients = (): Patient[] => {
+  const list: Patient[] = [];
+  let index = 0;
+  const make = (overrides: Partial<Patient>): Patient => {
+    const name = NAMES[index % NAMES.length];
+    index += 1;
+    return {
+      id: `2600${String(1200 + index)}`,
+      name,
+      dob: String(1950 + ((index * 7) % 50)),
+      gender: /Thị/.test(name) ? 'Nữ' : 'Nam',
+      phoneNumber: `09${String(10000000 + index * 7919).slice(0, 8)}`,
+      room: String(201 + (index % 6)),
+      bed: String(1 + (index % 5)),
+      treatmentType: 'Ngoai',
+      status: 'ChoMo',
+      diagnosis: DIAGNOSES[index % DIAGNOSES.length],
+      treatingDoctor: DOCTORS[index % DOCTORS.length],
+      admissionDate: day(-(index % 9)),
+      ...overrides,
+    } as Patient;
+  };
+  // Chờ mổ
+  for (let i = 0; i < 5; i++) list.push(make({ status: 'ChoMo', admissionDate: day(-(i * 2 + 1)) }));
+  // Đã duyệt: hôm nay, ngày mai, quá ngày
+  [0, 0, 0, 1, 1, -2].forEach((offset, i) => {
+    const [service, type, method] = services[i % services.length];
+    list.push(
+      make({
+        status: 'DaDuyet',
+        surgeryDate: day(offset),
+        surgeryOrder: (i % 3) + 1,
+        surgeryService: service,
+        surgeryType: type,
+        surgeryMethod: method,
+        surgeon: DOCTORS[i % 3],
+        assistantSurgeon1: DOCTORS[(i + 1) % 5],
+        anesthetist: DOCTORS[4],
+        anesthetistAssistant: NURSES[(i + 2) % 5],
+        scrubNurse: NURSES[i % 5],
+        approvalDate: new Date().toISOString(),
+        activityType: service === 'RFA' ? 'Thủ thuật' : 'Phẫu thuật',
+      }),
+    );
+  });
+  // Hậu phẫu
+  for (let i = 0; i < 6; i++) {
+    const [service, type, method] = services[i % services.length];
+    list.push(
+      make({
+        status: 'DaMo',
+        actualSurgeryDate: day(-(i + 1)),
+        surgeryDate: day(-(i + 1)),
+        surgeryService: service,
+        surgeryType: i === 4 ? '' : type,
+        surgeryMethod: method,
+        surgeon: DOCTORS[i % 3],
+        activityType: service === 'RFA' ? 'Thủ thuật' : 'Phẫu thuật',
+      }),
+    );
+  }
+  // Ca thiếu phân loại để thử luồng "Cần phân loại"
+  list.push(make({ status: 'DaMo', actualSurgeryDate: day(-2), surgeryService: 'K_GIAP', surgeryMethod: 'Cắt toàn bộ tuyến giáp', surgeon: DOCTORS[0] }));
+  // Nội khoa
+  for (let i = 0; i < 3; i++) list.push(make({ status: 'DieuTri', treatmentType: 'Noi', diagnosis: 'Viêm giáp bán cấp' }));
+  // Ra viện — có dữ liệu mổ trong 6 tháng qua cho biểu đồ
+  for (let i = 0; i < 70; i++) {
+    const [service, type, method] = services[i % services.length];
+    const offset = -(5 + ((i * 3) % 170));
+    list.push(
+      make({
+        status: 'RaVien',
+        admissionDate: day(offset - 2),
+        actualSurgeryDate: day(offset),
+        dischargeDate: day(offset + 3),
+        surgeryService: service,
+        surgeryType: type,
+        surgeryMethod: method,
+        surgeon: DOCTORS[i % 4],
+        activityType: service === 'RFA' ? 'Thủ thuật' : 'Phẫu thuật',
+      }),
+    );
+  }
+  // Một ca nằm ghép để thử sơ đồ giường.
+  list[4] = { ...list[4], room: list[0].room, bed: list[0].bed };
+  return list;
+};
+
+const users = [
+  { username: 'admin', fullName: 'BS. Nguyễn Xuân Hùng', role: 'TRUONG_KHOA', nhomChuyenMon: 'BS' },
+  { username: 'bs.minh', fullName: 'BS. Trần Văn Minh', role: 'NHAN_VIEN', nhomChuyenMon: 'BS' },
+  { username: 'bs.hoa', fullName: 'BS. Lê Thị Hoa', role: 'NHAN_VIEN', nhomChuyenMon: 'BS' },
+  { username: 'bs.bao', fullName: 'BS. Phạm Quốc Bảo', role: 'NHAN_VIEN', nhomChuyenMon: 'BS' },
+  { username: 'bs.long', fullName: 'BS. Hoàng Đức Long', role: 'NHAN_VIEN', nhomChuyenMon: 'BS' },
+  { username: 'dd.lan', fullName: 'ĐD. Nguyễn Thị Lan', role: 'DIEU_DUONG_TRUONG', nhomChuyenMon: 'DD' },
+  { username: 'dd.ha', fullName: 'ĐD. Trần Thu Hà', role: 'NHAN_VIEN', nhomChuyenMon: 'DD' },
+  { username: 'dd.nam', fullName: 'ĐD. Lê Văn Nam', role: 'NHAN_VIEN', nhomChuyenMon: 'DD' },
+  { username: 'dd.mai', fullName: 'ĐD. Phan Thị Mai', role: 'NHAN_VIEN', nhomChuyenMon: 'DD' },
+  { username: 'dd.thao', fullName: 'ĐD. Vũ Thị Thảo', role: 'NHAN_VIEN', nhomChuyenMon: 'DD', active: false },
+].map((user, index) => ({ id: `U${index + 1}`, active: true, createdAt: day(-200 + index), canDeletePatient: index === 0, mustChangePassword: false, ...user }));
+
+const sheets: Record<string, Row[]> = {
+  Users: users,
+  Phan_Truc_Ngay: Array.from({ length: 24 }, (_, i) => ({
+    id: uid('S'),
+    date: day(i - 14),
+    doctor: DOCTORS[i % 5],
+    nurse1: NURSES[i % 5],
+    nurse2: NURSES[(i + 2) % 5],
+    note: '',
+  })).filter((_, i) => i !== 15), // để trống ngày mai
+  Thuoc_Kho: [
+    { id: uid('M'), name: 'Cefazolin 1g', content: 'Bột pha tiêm', quantity: 40, unit: 'Lọ', expiryDate: day(200) },
+    { id: uid('M'), name: 'Paracetamol 1g/100ml', content: 'Dịch truyền', quantity: 6, unit: 'Chai', expiryDate: day(20) },
+    { id: uid('M'), name: 'Calci clorid 10%', content: 'Ống 5ml', quantity: 25, unit: 'Ống', expiryDate: day(-5) },
+    { id: uid('M'), name: 'Chỉ Vicryl 3/0', content: 'Vật tư', quantity: 18, unit: 'Sợi', expiryDate: day(60) },
+    { id: uid('M'), name: 'Gạc vô khuẩn', content: '10x10cm', quantity: 200, unit: 'Gói', expiryDate: day(400) },
+  ],
+  May_Moc: [
+    { id: uid('E'), name: 'Máy RFA VIVA', code: 'RFA-01', inCharge: 'BS. Phạm Quốc Bảo', lastMaintenanceDate: day(-170), maintenanceCycle: 6, condition: 'Normal' },
+    { id: uid('E'), name: 'Dàn mổ nội soi Karl Storz', code: 'NS-02', inCharge: 'ĐD. Lê Văn Nam', lastMaintenanceDate: day(-40), maintenanceCycle: 12, condition: 'Normal' },
+    { id: uid('E'), name: 'Máy monitor 5 thông số', code: 'MON-03', inCharge: 'ĐD. Trần Thu Hà', lastMaintenanceDate: day(-400), maintenanceCycle: 12, condition: 'Repairing', notes: 'Lỗi cảm biến SpO2' },
+  ],
+  DeTai_CoSo: [
+    { id: uid('R'), topic: 'Đánh giá kết quả phẫu thuật TOETVA điều trị bướu giáp lành tính', author: 'BS. Nguyễn Xuân Hùng', startDate: day(-200), deadline: day(15), progress: 70, notes: '' },
+    { id: uid('R'), topic: 'Kết quả đốt hạch giao cảm ngực điều trị tăng tiết mồ hôi tay', author: 'BS. Trần Văn Minh', startDate: day(-300), deadline: day(-10), progress: 85, notes: 'Chờ phân tích số liệu' },
+    { id: uid('R'), topic: 'Hiệu quả RFA nhân giáp lành tính', author: 'BS. Phạm Quốc Bảo', startDate: day(-400), deadline: day(-60), progress: 100, notes: 'Đã nghiệm thu' },
+  ],
+  SinhHoat_KH: [
+    { id: uid('H'), time: `${day(3)}T14:00`, topic: 'Cập nhật hướng dẫn ATA 2025 về nhân giáp', presenter: 'BS. Lê Thị Hoa', location: 'Phòng giao ban', notes: 'Tài liệu: https://example.com/ata' },
+    { id: uid('H'), time: `${day(10)}T14:00`, topic: 'Báo cáo ca bệnh: biến chứng hạ calci sau mổ', presenter: 'BS. Hoàng Đức Long', location: 'Hội trường', notes: '' },
+    { id: uid('H'), time: `${day(-20)}T14:00`, topic: 'Kỹ thuật bảo tồn tuyến cận giáp', presenter: 'BS. Nguyễn Xuân Hùng', location: 'Phòng giao ban', notes: '' },
+  ],
+  KyThuat_Moi: [
+    { id: uid('K'), name: 'TOETVA', leader: 'BS. Nguyễn Xuân Hùng', startDate: day(-500), progress: 100, count: 12, status: 'HoanThanh', description: 'Phẫu thuật nội soi tuyến giáp qua tiền đình miệng' },
+    { id: uid('K'), name: 'Đốt sóng cao tần', leader: 'BS. Phạm Quốc Bảo', startDate: day(-200), progress: 60, count: 8, status: 'DangTrienKhai', description: 'RFA nhân giáp lành tính' },
+    { id: uid('K'), name: 'Theo dõi thần kinh thanh quản quặt ngược (IONM)', leader: 'BS. Trần Văn Minh', startDate: day(-20), progress: 10, count: 0, status: 'DeXuat' },
+  ],
+  NoiDung_TT: [
+    { id: uid('T'), title: 'Phẫu thuật tuyến giáp không để lại sẹo vùng cổ', platform: 'Facebook', leader: 'ĐD. Phan Thị Mai', publishDate: day(-3), status: 'DaDang', link: 'https://facebook.com', content: 'Giới thiệu kỹ thuật TOETVA' },
+    { id: uid('T'), title: 'Chăm sóc sau mổ tuyến giáp tại nhà', platform: 'Zalo', leader: 'ĐD. Nguyễn Thị Lan', publishDate: day(5), status: 'Duyet', content: '' },
+    { id: uid('T'), title: 'Ngày hội khám sàng lọc bướu giáp', platform: 'Website', leader: 'BS. Lê Thị Hoa', publishDate: day(14), status: 'Nhap', content: '' },
+  ],
+  Vung_5S: [
+    { id: 'Z1', name: 'Buồng 201', type: 'Buồng bệnh', pic: 'ĐD. Trần Thu Hà', currentScore: 0, lastCheckDate: '' },
+    { id: 'Z2', name: 'Phòng thủ thuật', type: 'Phòng thủ thuật', pic: 'ĐD. Lê Văn Nam', currentScore: 0, lastCheckDate: '' },
+    { id: 'Z3', name: 'Kho vật tư', type: 'Kho', pic: 'ĐD. Phan Thị Mai', currentScore: 0, lastCheckDate: '' },
+  ],
+  DanhGia_5S: [
+    { id: uid('V'), zoneId: 'Z1', date: day(-60), score: 82, assessor: 'ĐD. Nguyễn Thị Lan', comments: '' },
+    { id: uid('V'), zoneId: 'Z1', date: day(-30), score: 88, assessor: 'ĐD. Nguyễn Thị Lan', comments: '' },
+    { id: uid('V'), zoneId: 'Z1', date: day(-2), score: 93, assessor: 'ĐD. Nguyễn Thị Lan', comments: 'Gọn gàng' },
+    { id: uid('V'), zoneId: 'Z2', date: day(-45), score: 65, assessor: 'ĐD. Nguyễn Thị Lan', comments: 'Dụng cụ chưa dán nhãn' },
+  ],
+  CaiTien_5S: [
+    { id: uid('I'), zoneId: 'Z2', content: 'Dán nhãn khay dụng cụ theo màu', proposer: 'ĐD. Lê Văn Nam', status: 'DangLam' },
+    { id: uid('I'), zoneId: 'Z3', content: 'Sắp xếp vật tư theo nguyên tắc FEFO', proposer: 'ĐD. Phan Thị Mai', status: 'DeXuat' },
+  ],
+  GiaoBan_Log: [
+    {
+      id: uid('G'),
+      date: day(-1),
+      host: 'BS. Nguyễn Xuân Hùng',
+      content: 'I. Tình hình bệnh nhân\n- Tổng số 21 BN, chờ mổ 5.\nII. Ý kiến chỉ đạo\n- Tăng cường theo dõi calci sau mổ.',
+      congViecJson: JSON.stringify([
+        { id: 'T1', taskName: 'Hoàn thiện hồ sơ bệnh án tháng', assigneeUsername: 'bs.minh', assigneeName: 'BS. Trần Văn Minh', deadline: day(2), progress: 30 },
+        { id: 'T2', taskName: 'Kiểm kê tủ thuốc trực', assigneeUsername: 'dd.lan', assigneeName: 'ĐD. Nguyễn Thị Lan', deadline: day(-1), progress: 0 },
+      ]),
+    },
+  ],
+  CongViec_NhanVien: [
+    { id: uid('W'), userId: 'admin', tieuDe: 'Duyệt báo cáo thống kê PT tháng', noiDung: 'Rà soát số liệu trước khi gửi phòng KHTH', nguoiGiao: 'Ban giám đốc', ngayGiao: day(-5), hanHoanThanh: day(-1), mucDoUuTien: 'Cao', trangThai: 'Đang làm', tienDo: 60 },
+    { id: uid('W'), userId: 'bs.minh', tieuDe: 'Hoàn thiện hồ sơ bệnh án tháng', noiDung: 'Hoàn thiện hồ sơ bệnh án tháng', nguoiGiao: 'BS. Nguyễn Xuân Hùng', ngayGiao: day(-1), hanHoanThanh: day(2), mucDoUuTien: 'Trung bình', trangThai: 'Đang làm', tienDo: 30, sourceType: 'daily_briefing', sourceDate: day(-1) },
+    { id: uid('W'), userId: 'dd.lan', tieuDe: 'Kiểm kê tủ thuốc trực', noiDung: '', nguoiGiao: 'BS. Nguyễn Xuân Hùng', ngayGiao: day(-1), hanHoanThanh: day(-1), mucDoUuTien: 'Khẩn', trangThai: 'Chưa làm', tienDo: 0, sourceType: 'daily_briefing', sourceDate: day(-1) },
+    { id: uid('W'), userId: 'admin', tieuDe: 'Chuẩn bị bài SHKH tháng', noiDung: '', nguoiGiao: 'Tự giao', ngayGiao: day(-10), hanHoanThanh: day(5), mucDoUuTien: 'Trung bình', trangThai: 'Hoàn thành', tienDo: 100 },
+  ],
+  DanhGia_NhanVien: [
+    { id: uid('D'), userId: 'bs.minh', loaiDanhGia: 'Quý', quy: 'Q3', nam: today.getFullYear(), diemHoanThanhCongViec: 90, diemThaiDo: 85, diemKyLuat: 95, diemPhoiHop: 88, diemSangKien: 70, diemTong: 86, xepLoai: 'Tốt', nhanXet: 'Chủ động, nhiệt tình', nguoiDanhGia: 'BS. Nguyễn Xuân Hùng', ngayDanhGia: day(-15) },
+  ],
+  CongTac_DieuDuong: [
+    { id: uid('N'), date: day(0), shift: 'Sáng', task: 'Nhận bàn giao ca đêm', status: 'Hoàn thành', assignee: 'ĐD. Nguyễn Thị Lan', priority: 'Thường' },
+    { id: uid('N'), date: day(0), shift: 'Sáng', task: 'Chuẩn bị bệnh nhân mổ (nhịn ăn, vệ sinh, hồ sơ)', status: 'Đang làm', assignee: 'ĐD. Trần Thu Hà', priority: 'Ưu tiên' },
+    { id: uid('N'), date: day(0), shift: 'Sáng', task: 'Theo dõi calci BN hậu phẫu giường 3 buồng 202', status: 'Chưa làm', assignee: 'ĐD. Lê Văn Nam', priority: 'Khẩn' },
+    { id: uid('N'), date: day(0), shift: 'Chiều', task: 'Tư vấn, giáo dục sức khoẻ trước ra viện', status: 'Chưa làm', priority: 'Thường' },
+    { id: uid('N'), date: day(-1), shift: 'Đêm', task: 'Kiểm tra trang thiết bị cấp cứu', status: 'Hoàn thành', assignee: 'ĐD. Phan Thị Mai', priority: 'Thường' },
+  ],
+  Config: [
+    { key: 'TEN_KHOA', value: 'Khoa Ngoại Tổng Hợp', description: 'Tên hiển thị trên biểu mẫu' },
+    { key: 'SO_GIUONG', value: '27', description: 'Tổng số giường kế hoạch' },
+  ],
+  Roles_Permission: [{ id: 'P1', role: 'NHAN_VIEN', module: 'inventory', canView: true, canAdd: false, canEdit: false, canDelete: false }],
+  AuditLogs: [],
+};
+
+let patients = buildPatients();
+let vips: Row[] = [
+  { id: 'VIP_1', patientId: patients[1].id, priority: 'Cao', reason: 'Người nhà cán bộ, dị ứng kháng sinh nhóm beta-lactam', createdAt: day(-2) },
+  { id: 'VIP_2', patientId: patients[8].id, priority: 'Trung bình', reason: 'Bệnh nền tăng huyết áp, đái tháo đường', createdAt: day(-1) },
+  { id: 'VIP_3', patientId: patients[patients.length - 1].id, priority: 'Thấp', reason: 'Cần hỗ trợ thủ tục BHYT', createdAt: day(-30) },
+];
+
+const audit = (action: string, module: string, label: string, changes: Row = {}) => {
+  sheets.AuditLogs.unshift({
+    id: uid('A'),
+    timestamp: new Date().toISOString(),
+    actorUsername: 'admin',
+    actorName: 'BS. Nguyễn Xuân Hùng (demo)',
+    actorRole: 'TRUONG_KHOA',
+    module,
+    action,
+    entityType: module,
+    entityLabel: label,
+    changesJson: JSON.stringify(changes),
+    status: 'success',
+  });
+};
+
+const delay = <T,>(value: T, ms = 220): Promise<T> => new Promise(resolve => setTimeout(() => resolve(JSON.parse(JSON.stringify(value))), ms));
+const sheet = (name: string) => (sheets[name] ||= []);
+const keyField = (name: string) => (name === 'Users' ? 'username' : name === 'Config' ? 'key' : 'id');
+
+export async function mockRpc(funcName: string, args: any[]): Promise<any> {
+  switch (funcName) {
+    case 'loginUser': {
+      const user = users.find(item => item.username === String(args[0] || '').toLowerCase()) || users[0];
+      return delay({ user, sessionToken: `mock_${Date.now()}`, expiresAt: new Date(Date.now() + 8 * 3600_000).toISOString() });
+    }
+    case 'logoutUser':
+    case 'changeMyPassword':
+      return delay({ success: true });
+    case 'apiGet':
+      return delay(sheet(args[0]));
+    case 'apiAdd': {
+      const [name, data] = args;
+      if (name === 'DS_BenhNhan') return delay({ success: true, id: data?.id });
+      const row = { ...data };
+      if (name !== 'Config') row.id = row.id || uid(name);
+      if (name === 'Config' && sheet(name).some(item => item.key === row.key)) throw new Error(`Mã cấu hình '${row.key}' đã tồn tại!`);
+      sheet(name).push(row);
+      audit('create', name, row.name || row.title || row.tieuDe || row.task || row.topic || row.key || row.id);
+      return delay({ success: true, id: row.id || row.key });
+    }
+    case 'apiUpdate': {
+      const [name, id, data] = args;
+      // Bản sao bệnh nhân trên Sheets (dual-write) không cần mô phỏng ở chế độ demo.
+      if (name === 'DS_BenhNhan' || name === 'BN_LuuY') return delay({ success: true });
+      const field = keyField(name);
+      const row = sheet(name).find(item => String(item[field]) === String(id));
+      if (!row) throw new Error(`Record ID "${id}" not found in ${name}`);
+      const changes: Row = {};
+      Object.keys(data).forEach(key => {
+        if (key !== 'password' && String(row[key] ?? '') !== String(data[key] ?? '')) changes[key] = { before: row[key] ?? '', after: data[key] };
+      });
+      Object.assign(row, data, data.password ? { mustChangePassword: true } : {});
+      delete row.password;
+      audit(data.password ? 'reset_password' : 'update', name, row.name || row.title || row.tieuDe || row.task || row.fullName || id, changes);
+      return delay({ success: true });
+    }
+    case 'apiDelete': {
+      const [name, id] = args;
+      if (name === 'DS_BenhNhan' || name === 'BN_LuuY') return delay({ success: true });
+      const field = keyField(name);
+      sheets[name] = sheet(name).filter(item => String(item[field]) !== String(id));
+      audit('delete', name, String(id));
+      return delay({ success: true });
+    }
+    case 'getDoctors':
+      return delay(users.filter(user => user.nhomChuyenMon === 'BS' && user.active).map(user => ({ id: user.id, fullName: user.fullName })));
+    case 'getPersonnelLists':
+      return delay({
+        doctors: users.filter(user => user.nhomChuyenMon === 'BS' && user.active).map(user => user.fullName),
+        nurses: users.filter(user => user.nhomChuyenMon === 'DD' && user.active).map(user => user.fullName),
+      });
+    case 'getBriefingBundle':
+      return delay({ briefings: sheet('GiaoBan_Log'), users: users.filter(user => user.active).map(user => ({ username: user.username, fullName: user.fullName })) });
+    case 'getDashboardOperationsData':
+      return delay({
+        staffTasks: sheet('CongViec_NhanVien'),
+        medicines: sheet('Thuoc_Kho'),
+        equipment: sheet('May_Moc'),
+        improvements: sheet('CaiTien_5S'),
+        evaluations5S: sheet('DanhGia_5S'),
+        shifts: sheet('Phan_Truc_Ngay'),
+        meetings: sheet('SinhHoat_KH'),
+        research: sheet('DeTai_CoSo'),
+        nursingTasks: sheet('CongTac_DieuDuong').filter(task => task.date === day(0)),
+      });
+    case 'getNursingTasks':
+      return delay(sheet('CongTac_DieuDuong').filter(task => task.date >= args[0] && task.date <= (args[1] || args[0])));
+    case 'batchAddNursingTasks':
+      (args[0] || []).forEach((task: Row) => sheet('CongTac_DieuDuong').push({ ...task, id: uid('N') }));
+      audit('batch_create', 'CongTac_DieuDuong', `${(args[0] || []).length} việc điều dưỡng`);
+      return delay({ success: true });
+    case 'batchSaveDailyOnCall':
+      (args[0] || []).forEach((shift: Row) => {
+        const existing = sheet('Phan_Truc_Ngay').find(item => item.date === shift.date);
+        if (existing) Object.assign(existing, shift);
+        else sheet('Phan_Truc_Ngay').push({ ...shift, id: uid('S') });
+      });
+      return delay({ success: true });
+    case 'saveRolePermissions':
+      (args[0] || []).forEach((perm: Row) => {
+        const existing = sheet('Roles_Permission').find(item => item.role === perm.role && item.module === perm.module);
+        if (existing) Object.assign(existing, perm);
+        else sheet('Roles_Permission').push({ ...perm, id: `${perm.role}_${perm.module}` });
+      });
+      return delay({ success: true });
+    case 'getRecentAuditLogs':
+      return delay(sheet('AuditLogs').slice(0, args[0]?.limit || 300));
+    case 'addVipPatientSafe':
+      return delay({ success: true });
+    default:
+      return delay({ success: true });
+  }
+}
+
+export async function mockClinical(action: string, args: any[]): Promise<any> {
+  switch (action) {
+    case 'patients.list':
+      return delay(patients, 350);
+    case 'patients.surgeryApprovalList':
+      return delay(patients.filter(patient => patient.status === 'ChoMo' || patient.status === 'DaDuyet'));
+    case 'patients.add': {
+      const patient = args[0] as Patient;
+      if (patients.some(item => item.id === patient.id)) throw Object.assign(new Error(`Mã bệnh nhân '${patient.id}' đã tồn tại!`), { code: 'DUPLICATE' });
+      patients = [patient, ...patients];
+      audit('create', 'patients', patient.name);
+      return delay(patient);
+    }
+    case 'patients.update': {
+      const [id, data] = args;
+      patients = patients.map(patient => (patient.id === id ? { ...patient, ...data } : patient));
+      audit(data.status === 'DaDuyet' ? 'approve' : 'update', 'patients', patients.find(patient => patient.id === id)?.name || id);
+      return delay(patients.find(patient => patient.id === id));
+    }
+    case 'patients.delete':
+      patients = patients.filter(patient => patient.id !== args[0]);
+      vips = vips.filter(vip => vip.patientId !== args[0]);
+      audit('delete', 'patients', args[0]);
+      return delay({ success: true });
+    case 'vip.list':
+      return delay(
+        vips.map(vip => {
+          const patient = patients.find(item => item.id === vip.patientId);
+          return { ...vip, name: patient?.name || '', room: patient?.room || '', bed: patient?.bed || '', diagnosis: patient?.diagnosis || '' };
+        }),
+      );
+    case 'vip.add': {
+      const [patientId, priority, reason] = args;
+      const row = { id: uid('VIP'), patientId, priority: priority || 'Cao', reason, createdAt: day(0) };
+      vips = [row, ...vips];
+      return delay(row);
+    }
+    case 'vip.delete':
+      vips = vips.filter(vip => vip.id !== args[0]);
+      return delay({ success: true });
+    default:
+      return delay({});
+  }
+}

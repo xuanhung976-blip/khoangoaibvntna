@@ -22,11 +22,13 @@ import type {
   Evaluation5S,
   Improvement5S,
   DailyOnCall,
-  User,
   SystemConfig,
   RolePermission,
   StaffEvaluation,
+  DashboardStats,
 } from '../types';
+import { getVietnamMonthKey } from '../utils/dateUtils';
+import { calculateSurgeryStats } from '../utils/surgeryStats';
 
 // ─── DB helper ──────────────────────────────────────────────────────────────
 const db = () => supabase!;
@@ -76,11 +78,15 @@ const toSnakeRow = (obj: any): any => {
 // We probe once, cache the result, and skip missing columns.
 // =========================================================
 
-/** Columns confirmed to exist in the patients table */
+/** Columns confirmed to exist in the patients table.
+ *  NOTE: Optional columns (v3+) are NOT included here by default.
+ *  They are discovered at runtime by ensurePatientColumns() and added
+ *  only if the database actually has them. This prevents PGRST204 errors
+ *  when the schema has not yet been migrated. */
 let _patientColumnsChecked = false;
 const _availablePatientCols = new Set<string>([
   // Core columns — always present (from original schema)
-  'id', 'name', 'dob', 'gender', 'phone_number', 'address',
+  'id', 'name', 'dob', 'gender', 'phone_number', 'address', 'cccd', 'bhyt_code',
   'room', 'bed', 'admission_date', 'discharge_date', 'diagnosis',
   'status', 'treatment_type', 'treating_doctor', 'notes',
   'surgery_date', 'surgery_method', 'surgery_order',
@@ -88,27 +94,39 @@ const _availablePatientCols = new Set<string>([
   'anesthetist', 'anesthetist_assistant', 'scrub_nurse',
   'approval_date', 'approval_note',
   'created_at', 'updated_at',
+  // Surgery stats columns — added via schema_patch_v2.sql
+  'actual_surgery_date',
+  'surgery_classification',
+  'intervention_type',
+  'activity_type',
+  // *** v3 optional columns (surgery_service, surgery_type) are intentionally
+  // *** NOT in this default set — they are added dynamically by ensurePatientColumns
+  // *** only if they actually exist in the database. This prevents save errors.
 ]);
 
-/** Probe optional columns at runtime (once per session) using a single select('*') to prevent 400 Bad Request network errors */
+/** Probe optional columns at runtime (once per session).
+ *  The 4 surgery-stats columns are already in the default set above
+ *  (added via supabase_schema_patch_v2.sql). This probe adds any
+ *  future columns that may be added to the DB schema. */
 async function ensurePatientColumns(): Promise<void> {
   if (_patientColumnsChecked) return;
   _patientColumnsChecked = true;
   try {
-    const { data } = await db().from('patients').select('*').limit(1);
-    if (data && data.length > 0 && data[0]) {
-      const keys = Object.keys(data[0]);
-      [
-        'actual_surgery_date',
-        'surgery_classification',
-        'intervention_type',
-        'activity_type',
-      ].forEach(col => {
-        if (keys.includes(col)) _availablePatientCols.add(col);
-      });
+    const { data, error } = await db().from('patients').select('*').limit(1);
+    if (error) {
+      console.warn('[ensurePatientColumns] Probe query error:', error.message);
+      return;
     }
-  } catch {
-    /* fallback to safe defaults */
+    if (data && data.length > 0 && data[0]) {
+      // Add ALL columns actually present in the database
+      // (replaces the conservative default set with ground-truth)
+      Object.keys(data[0]).forEach(col => _availablePatientCols.add(col));
+    }
+    // If table is empty: keep the safe default set as-is.
+    // Optional v3 columns (surgery_service, surgery_type) are excluded from
+    // the default set and will only be added if a real row is returned above.
+  } catch (err) {
+    console.warn('[ensurePatientColumns] Failed to probe columns, using safe defaults:', err);
   }
 }
 
@@ -131,6 +149,8 @@ const patientToRow = (p: Partial<Patient>): Record<string, any> => {
   if (p.gender          !== undefined) row.gender                = p.gender;
   if (p.phoneNumber     !== undefined) row.phone_number          = p.phoneNumber;
   if (p.address         !== undefined) row.address               = p.address;
+  if (p.cccd            !== undefined) row.cccd                  = p.cccd;
+  if (p.bhytCode        !== undefined) row.bhyt_code             = p.bhytCode;
   if (p.room            !== undefined) row.room                  = p.room;
   if (p.bed             !== undefined) row.bed                   = p.bed;
   if (p.admissionDate   !== undefined) row.admission_date        = p.admissionDate;
@@ -153,10 +173,13 @@ const patientToRow = (p: Partial<Patient>): Record<string, any> => {
   if (p.approvalDate           !== undefined) row.approval_date             = p.approvalDate;
   if (p.approvalNote           !== undefined) row.approval_note             = p.approvalNote;
   // Optional columns — only included if column exists in DB
-  addIf(row, 'actual_surgery_date',   p.actualSurgeryDate);
+  addIf(row, 'actual_surgery_date',    p.actualSurgeryDate);
   addIf(row, 'surgery_classification', p.surgeryClassification);
-  addIf(row, 'intervention_type',     p.interventionType);
-  addIf(row, 'activity_type',         p.activityType);
+  addIf(row, 'intervention_type',      p.interventionType);
+  addIf(row, 'activity_type',          p.activityType);
+  // New v3 fields
+  addIf(row, 'surgery_service',        p.surgeryService);
+  addIf(row, 'surgery_type',           p.surgeryType);
   return row;
 };
 
@@ -170,6 +193,8 @@ const rowToPatient = (row: any): Patient => ({
   gender:                 row.gender,
   phoneNumber:            row.phone_number,
   address:                row.address,
+  cccd:                   row.cccd,
+  bhytCode:               row.bhyt_code,
   room:                   row.room,
   bed:                    row.bed,
   admissionDate:          row.admission_date,
@@ -195,6 +220,9 @@ const rowToPatient = (row: any): Patient => ({
   surgeryClassification:  row.surgery_classification,
   interventionType:       row.intervention_type,
   activityType:           row.activity_type,
+  // New v3 fields
+  surgeryService:         row.surgery_service,
+  surgeryType:            row.surgery_type,
 });
 
 // =========================================================
@@ -279,67 +307,6 @@ export const removeVipPatient = async (id: string) => {
   check(error, 'removeVipPatient');
   return { success: true };
 };
-
-// =========================================================
-// 3. USERS — explicit mapper
-// =========================================================
-const rowToUser = (row: any): User => ({
-  username:           row.username,
-  fullName:           row.full_name,
-  role:               row.role,
-  chucVu:             row.chuc_vu,
-  nhomChuyenMon:      row.nhom_chuyen_mon,
-  active:             row.active,
-  mustChangePassword: row.must_change_password,
-  // password_hash intentionally NOT mapped to UI
-} as any);
-
-const userToRow = (u: Partial<User> & { password?: string }): Record<string, any> => {
-  const row: Record<string, any> = {};
-  if (u.username           !== undefined) row.username             = u.username;
-  if ((u as any).password  !== undefined) row.password_hash        = (u as any).password;
-  if (u.fullName           !== undefined) row.full_name            = u.fullName;
-  if (u.role               !== undefined) row.role                 = u.role;
-  if (u.chucVu             !== undefined) row.chuc_vu              = u.chucVu;
-  if (u.nhomChuyenMon      !== undefined) row.nhom_chuyen_mon      = u.nhomChuyenMon;
-  if (u.active             !== undefined) row.active               = u.active;
-  if (u.mustChangePassword !== undefined) row.must_change_password = u.mustChangePassword;
-  return row;
-};
-
-export const getUsers = async (): Promise<User[]> => {
-  const { data, error } = await db().from('users').select('*').order('full_name');
-  check(error, 'getUsers');
-  return (data || []).map(rowToUser);
-};
-
-export const saveUser = async (u: User) => {
-  const row = userToRow(u);
-  if (!row.username) throw new Error('username is required');
-  const { data, error } = await db().from('users').insert([row]).select().single();
-  check(error, 'saveUser');
-  return rowToUser(data);
-};
-
-export const updateUser = async (username: string, u: Partial<User> & { password?: string }) => {
-  const row = userToRow(u);
-  row.updated_at = new Date().toISOString();
-  const { data, error } = await db().from('users').update(row).eq('username', username).select().single();
-  check(error, 'updateUser');
-  return rowToUser(data);
-};
-
-export const deleteUser = async (username: string) => {
-  const { error } = await db().from('users').delete().eq('username', username);
-  check(error, 'deleteUser');
-  return { success: true };
-};
-
-export const toggleLockUser = (username: string, active: boolean) =>
-  updateUser(username, { active } as any);
-
-export const resetUserPassword = (username: string) =>
-  updateUser(username, { password: '123456' } as any);
 
 // =========================================================
 // 4. DAILY ON CALL — explicit mapper
@@ -672,8 +639,9 @@ export const getPermissions = async (): Promise<RolePermission[]> => {
     id:        row.id,
     role:      row.role,
     module:    row.module,
-    canRead:   row.can_read,
-    canWrite:  row.can_write,
+    canView:   row.can_read,
+    canAdd:    row.can_write,
+    canEdit:   row.can_write,
     canDelete: row.can_delete,
   })) as RolePermission[];
 };
@@ -683,8 +651,8 @@ export const saveRolePermissions = async (perms: RolePermission[]) => {
     id:         p.id || `PERM_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     role:       p.role,
     module:     p.module,
-    can_read:   p.canRead,
-    can_write:  p.canWrite,
+    can_read:   p.canView,
+    can_write:  p.canAdd || p.canEdit,
     can_delete: p.canDelete,
   }));
   const { error } = await db().from('role_permissions').upsert(rows, { onConflict: 'id' });
@@ -1002,22 +970,41 @@ export const writeActionLog = async (
 // =========================================================
 // 14. DASHBOARD STATS
 // =========================================================
-export const getDashboardStats = async () => {
+export const getDashboardStats = async (): Promise<DashboardStats> => {
   try {
-    const [patientsRes, usersRes] = await Promise.all([
-      db().from('patients').select('id, status'),
-      db().from('users').select('id, active'),
+    const [patientsRes, vipRes] = await Promise.all([
+      db().from('patients').select('*'),
+      db().from('vip_patients').select('id'),
     ]);
-    const patients: any[] = patientsRes.data || [];
-    const users:    any[] = usersRes.data    || [];
+    check(patientsRes.error, 'getDashboardStats patients');
+    const patients = (patientsRes.data || []).map(rowToPatient);
+    const surgeryStats = calculateSurgeryStats(patients, getVietnamMonthKey());
     return {
-      totalPatients:    patients.length,
-      inpatients:       patients.filter(p => p.status === 'DangDieuTri').length,
-      pendingSurgery:   patients.filter(p => p.status === 'ChoMo').length,
-      totalStaff:       users.filter(u => u.active).length,
-      briefingsThisMonth: 0,
+      clinical: {
+        total: patients.filter(patient => patient.status !== 'RaVien').length,
+        waitingSurgery: patients.filter(patient => patient.status === 'ChoMo').length,
+        vip: vipRes.data?.length || 0,
+        discharged: patients.filter(patient => patient.status === 'RaVien').length,
+      },
+      surgery: {
+        monthTotal: surgeryStats.totalSurgeries,
+        approved: patients.filter(patient => patient.status === 'DaDuyet').length,
+      },
+      science: { ongoing: 0, meetingsMonth: 0 },
+      admin: { briefingToday: null, overdueTasks: 0 },
+      inventory: { medsNearExpiry: 0, equipOverdue: 0 },
+      onCall: { doctor: '---', nurse1: '---', nurse2: '---' },
+      deadlines: [],
     };
   } catch {
-    return { totalPatients: 0, inpatients: 0, pendingSurgery: 0, totalStaff: 0, briefingsThisMonth: 0 };
+    return {
+      clinical: { total: 0, waitingSurgery: 0, vip: 0, discharged: 0 },
+      surgery: { monthTotal: 0, approved: 0 },
+      science: { ongoing: 0, meetingsMonth: 0 },
+      admin: { briefingToday: null, overdueTasks: 0 },
+      inventory: { medsNearExpiry: 0, equipOverdue: 0 },
+      onCall: { doctor: '---', nurse1: '---', nurse2: '---' },
+      deadlines: [],
+    };
   }
 };

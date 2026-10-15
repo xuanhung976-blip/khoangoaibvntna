@@ -1,5 +1,3 @@
-import * as XLSX from 'xlsx';
-
 /**
  * Robustly calculates patient age from various date/year formats:
  * - DD/MM/YYYY or DD-MM-YYYY (e.g. "15/08/1985", "15-08-1985")
@@ -32,7 +30,7 @@ export const getAge = (dob: unknown): number | string => {
   // Case 2: 4-digit year (e.g. "1985")
   if (/^\d{4}$/.test(str)) {
     const year = parseInt(str, 10);
-    if (year > 1970 && year <= currentYear) {
+    if (year >= 1900 && year <= currentYear) {
       return Math.max(0, currentYear - year);
     }
     return '';
@@ -42,7 +40,7 @@ export const getAge = (dob: unknown): number | string => {
   const ddmmyyyy = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
   if (ddmmyyyy) {
     const year = parseInt(ddmmyyyy[3], 10);
-    if (year > 1970 && year <= currentYear) {
+    if (year >= 1900 && year <= currentYear) {
       return Math.max(0, currentYear - year);
     }
     return '';
@@ -52,7 +50,7 @@ export const getAge = (dob: unknown): number | string => {
   const yyyymmdd = str.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
   if (yyyymmdd) {
     const year = parseInt(yyyymmdd[1], 10);
-    if (year > 1970 && year <= currentYear) {
+    if (year >= 1900 && year <= currentYear) {
       return Math.max(0, currentYear - year);
     }
     return '';
@@ -62,7 +60,7 @@ export const getAge = (dob: unknown): number | string => {
   const parsedDate = new Date(str);
   if (!isNaN(parsedDate.getTime())) {
     const year = parsedDate.getFullYear();
-    if (year > 1970 && year <= currentYear) {
+    if (year >= 1900 && year <= currentYear) {
       return currentYear - year;
     }
   }
@@ -84,7 +82,7 @@ export interface ExcelExportOptions {
 /**
  * Export data to a formatted Microsoft Excel (.xlsx) file, mirroring the PDF print page layout.
  */
-export const exportToExcel = ({
+const exportToExcelFile = async ({
   fileName,
   sheetName = 'Danh sách',
   title,
@@ -93,7 +91,7 @@ export const exportToExcel = ({
   rows,
   signers,
   creatorName,
-}: ExcelExportOptions) => {
+}: ExcelExportOptions): Promise<void> => {
   const sheetData: (string | number | boolean)[][] = [];
 
   // 1. Hospital Branding Header
@@ -148,8 +146,13 @@ export const exportToExcel = ({
     }
   }
 
-  // Create Worksheet
-  const ws = XLSX.utils.aoa_to_sheet(sheetData);
+  const ExcelJS = (await import('exceljs')).default;
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = creatorName || 'Khoa Ngoại Tổng Hợp';
+  workbook.created = new Date();
+  const safeSheetName = (sheetName || 'Danh sách').replace(/[\\/*?:[\]]/g, ' ').slice(0, 31);
+  const worksheet = workbook.addWorksheet(safeSheetName || 'Danh sách');
+  worksheet.addRows(sheetData);
 
   // Auto Column Width Calculation
   const colWidths = headers.map((h, colIdx) => {
@@ -158,15 +161,41 @@ export const exportToExcel = ({
       const cellVal = r[colIdx] !== undefined && r[colIdx] !== null ? r[colIdx].toString() : '';
       if (cellVal.length > maxLen) maxLen = cellVal.length;
     });
-    return { wch: Math.min(Math.max(maxLen + 4, 12), 55) };
+    return Math.min(Math.max(maxLen + 4, 12), 55);
   });
-  ws['!cols'] = colWidths;
+  worksheet.columns = colWidths.map(width => ({ width }));
 
-  // Create Workbook
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  worksheet.getRow(1).font = { bold: true, size: 13 };
+  worksheet.getRow(2).font = { bold: true, size: 12 };
+  const headerRowIndex = sheetData.findIndex(row => row === headers) + 1;
+  if (headerRowIndex > 0) {
+    const headerRow = worksheet.getRow(headerRowIndex);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  }
+  worksheet.eachRow(row => {
+    row.alignment = { ...row.alignment, vertical: 'top', wrapText: true };
+  });
 
-  // Download File
   const finalFileName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
-  XLSX.writeFile(wb, finalFileName);
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer as BlobPart], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = finalFileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+};
+
+export const exportToExcel = (options: ExcelExportOptions): void => {
+  void exportToExcelFile(options).catch(error => {
+    console.error('[Excel export] Failed:', error);
+    window.alert('Không thể xuất file Excel. Vui lòng thử lại.');
+  });
 };

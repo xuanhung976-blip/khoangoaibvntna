@@ -1,13 +1,15 @@
 // Transport layer abstraction for frontend -> Vercel API calls.
 
-const env =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env) || {};
+// Chỉ đọc đúng các biến môi trường được ứng dụng sử dụng để Vite không đưa
+// toàn bộ nhóm VITE_* (đặc biệt là khóa cũ/không còn dùng) vào bundle.
+const API_ENDPOINT = import.meta.env.DEV && import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL
+  : '/api/rpc';
 
-const API_ENDPOINT = env.DEV && env.VITE_API_URL ? env.VITE_API_URL : '/api/rpc';
-
-const USE_MOCK =
-  env.VITE_USE_MOCK === 'true' ||
-  (env.DEV && env.VITE_USE_MOCK !== 'false');
+// Chế độ dữ liệu giả lập chỉ bật khi chạy dev và đặt rõ VITE_USE_MOCK=true;
+// bản build production không bao giờ dùng mock.
+const USE_MOCK = import.meta.env.DEV && import.meta.env.VITE_USE_MOCK === 'true';
+export const isMockMode = USE_MOCK;
 
 type RpcPayload = {
   funcName: string;
@@ -148,42 +150,8 @@ export async function callApi<T = any>(
   }
 }
 
-async function mockResponse<T>(endpoint: string, payload?: any): Promise<T> {
-  console.warn('[MOCK API]', endpoint, payload);
-
+async function mockResponse<T>(_endpoint: string, payload?: any): Promise<T> {
   const rpc: RpcPayload | undefined = payload;
-  const funcName = rpc?.funcName;
-  const args = rpc?.args ?? [];
-
-  switch (funcName) {
-    case 'apiGet':
-      return [] as T;
-
-    case 'getDashboardOverview':
-      return {
-        clinical: { total: 0, waitingSurgery: 0, vip: 0, discharged: 0 },
-        surgery: { monthTotal: 0, approved: 0 },
-        science: { ongoing: 0, meetingsMonth: 0 },
-        admin: { briefingToday: null, overdueTasks: 0 },
-        inventory: { medsNearExpiry: 0, equipOverdue: 0 },
-        onCall: { doctor: '---', nurse1: '---', nurse2: '---' },
-        deadlines: [],
-      } as T;
-
-    case 'loginUser': {
-      const [username] = args;
-      return {
-        username: username || 'demo',
-        fullName: 'Tai khoan Demo',
-        role: 'TRUONG_KHOA',
-        nhomChuyenMon: 'BS',
-        active: true,
-        createdAt: new Date().toISOString(),
-        canDeletePatient: true,
-      } as T;
-    }
-
-    default:
-      return { success: true } as T;
-  }
+  const { mockRpc } = await import('./mockBackend');
+  return mockRpc(rpc?.funcName || '', rpc?.args ?? []) as Promise<T>;
 }

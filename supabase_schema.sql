@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS public.patients (
     notes TEXT,
     surgery_date VARCHAR(50),
     surgery_method TEXT,
+    actual_surgery_date VARCHAR(50),
+    surgery_classification VARCHAR(100),
+    intervention_type VARCHAR(255),
+    activity_type VARCHAR(100),
+    surgery_service VARCHAR(100),
+    surgery_type VARCHAR(100),
     surgeon VARCHAR(255),
     assistant_surgeon_1 VARCHAR(255),
     assistant_surgeon_2 VARCHAR(255),
@@ -35,9 +41,15 @@ CREATE TABLE IF NOT EXISTS public.patients (
     approval_date VARCHAR(50),
     approval_note TEXT,
     surgery_order INT,
+    cccd VARCHAR(20),
+    bhyt_code VARCHAR(20),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_patients_actual_surgery_date ON public.patients(actual_surgery_date);
+CREATE INDEX IF NOT EXISTS idx_patients_surgery_type ON public.patients(surgery_type);
+CREATE INDEX IF NOT EXISTS idx_patients_surgery_service ON public.patients(surgery_service);
 
 -- 2. USERS TABLE (Users)
 CREATE TABLE IF NOT EXISTS public.users (
@@ -198,7 +210,8 @@ CREATE TABLE IF NOT EXISTS public.role_permissions (
     can_delete BOOLEAN DEFAULT FALSE
 );
 
--- Enable Row Level Security (RLS) policies allowing public access (or key authenticated)
+-- Enable Row Level Security. Browser không truy cập Supabase trực tiếp;
+-- API server dùng service_role sau khi đã xác thực session qua GAS.
 ALTER TABLE public.patients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.vip_patients ENABLE ROW LEVEL SECURITY;
@@ -215,19 +228,10 @@ ALTER TABLE public.logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.staff_tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.role_permissions ENABLE ROW LEVEL SECURITY;
 
--- Allow anonymous & service access for web app
-CREATE POLICY "Allow public read/write on patients" ON public.patients FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on users" ON public.users FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on vip_patients" ON public.vip_patients FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on daily_on_call" ON public.daily_on_call FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on daily_briefing" ON public.daily_briefing FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on scientific_meetings" ON public.scientific_meetings FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on new_techniques" ON public.new_techniques FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on communication_contents" ON public.communication_contents FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on five_s_zones" ON public.five_s_zones FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on five_s_evaluations" ON public.five_s_evaluations FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on five_s_improvements" ON public.five_s_improvements FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on system_configs" ON public.system_configs FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on logs" ON public.logs FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on staff_tasks" ON public.staff_tasks FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read/write on role_permissions" ON public.role_permissions FOR ALL USING (true) WITH CHECK (true);
+REVOKE ALL ON TABLE
+  public.patients, public.users, public.vip_patients, public.daily_on_call,
+  public.daily_briefing, public.scientific_meetings, public.new_techniques,
+  public.communication_contents, public.five_s_zones, public.five_s_evaluations,
+  public.five_s_improvements, public.system_configs, public.logs,
+  public.staff_tasks, public.role_permissions
+FROM anon, authenticated;
