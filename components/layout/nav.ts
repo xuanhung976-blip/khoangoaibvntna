@@ -52,7 +52,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Điều dưỡng',
     items: [
-      { path: '/nursing-tasks', module: 'dieu_duong', label: 'Công tác điều dưỡng', icon: HeartPulse, description: 'Việc theo ca Sáng / Chiều / Đêm', keywords: 'dieu duong ca truc cham soc' },
+      { path: '/nursing-tasks', module: 'dieu_duong', label: 'Công tác điều dưỡng', icon: HeartPulse, description: 'Phân công cá nhân / nhóm & tiến độ', keywords: 'dieu duong ca truc cham soc phan cong nhom' },
       { path: '/shifts', module: 'shifts', label: 'Lịch trực', icon: CalendarClock, description: 'Phân trực bác sĩ & điều dưỡng', keywords: 'lich truc phan ca truc' },
     ],
   },

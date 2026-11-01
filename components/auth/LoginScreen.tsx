@@ -23,7 +23,7 @@ function loginErrorMessage(err: any) {
 
 const FEATURES = [
   { icon: Activity, title: 'Duyệt & xếp lịch mổ', text: 'Phân công ê-kíp, xếp ca, in lịch trong vài giây' },
-  { icon: HeartPulse, title: 'Công tác điều dưỡng', text: 'Theo dõi việc theo ca Sáng – Chiều – Đêm' },
+  { icon: HeartPulse, title: 'Công tác điều dưỡng', text: 'Phân công cá nhân / nhóm & theo dõi tiến độ' },
   { icon: CalendarClock, title: 'Lịch trực thông minh', text: 'Gợi ý phân trực cân bằng giữa các nhân viên' },
 ];
 

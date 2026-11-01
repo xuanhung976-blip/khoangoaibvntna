@@ -110,7 +110,7 @@ function getDetectedSchemas() {
     },
     {
       name: 'CongTac_DieuDuong',
-      columns: ['ID', 'Date', 'Shift', 'Task', 'Status', 'Assignee', 'Priority', 'Note', 'CreatedBy', 'UpdatedAt']
+      columns: ['ID', 'Date', 'Shift', 'Task', 'Status', 'Assignee', 'Group', 'NgayGiao', 'HanThucHien', 'GioHen', 'Room', 'Category', 'Priority', 'Note', 'CreatedBy', 'UpdatedAt']
     },
     {
       name: 'Logs',

@@ -202,11 +202,18 @@ export type NursingTaskStatus = 'Chưa làm' | 'Đang làm' | 'Hoàn thành';
 
 export interface NursingTask {
     id: string;
-    date: string; // YYYY-MM-DD
-    shift: NursingShift | string;
+    date: string; // YYYY-MM-DD (Ngày thực hiện)
+    shift?: NursingShift | string; // Optional legacy field
     task: string;
     status: NursingTaskStatus | string;
-    assignee?: string;
+    assignee?: string; // Tên điều dưỡng thực hiện
+    assigneeType?: 'individual' | 'group' | string;
+    group?: string; // Nhóm / Tổ điều dưỡng phụ trách
+    ngayGiao?: string; // Ngày giao việc (YYYY-MM-DD)
+    hanThucHien?: string; // Hạn thực hiện (YYYY-MM-DD)
+    gioHen?: string; // Giờ hạn chót / Hẹn giờ (vd: "11:30", "16:30")
+    room?: string;
+    category?: string;
     priority?: 'Thường' | 'Ưu tiên' | 'Khẩn' | string;
     note?: string;
     createdBy?: string;

@@ -216,7 +216,7 @@ function getKnownSheetHeaders() {
     DanhGia_5S: ['ID', 'ZoneId', 'Date', 'Assessor', 'Score', 'Comments'],
     CaiTien_5S: ['ID', 'ZoneId', 'Content', 'Proposer', 'Status', 'Result'],
     Phan_Truc_Ngay: ['ID', 'Date', 'Doctor', 'Nurse1', 'Nurse2', 'Note'],
-    CongTac_DieuDuong: ['ID', 'Date', 'Shift', 'Task', 'Status', 'Assignee', 'Priority', 'Note', 'CreatedBy', 'UpdatedAt'],
+    CongTac_DieuDuong: ['ID', 'Date', 'Shift', 'Task', 'Status', 'Assignee', 'Group', 'NgayGiao', 'HanThucHien', 'GioHen', 'Room', 'Category', 'Priority', 'Note', 'CreatedBy', 'UpdatedAt'],
     Config: ['Key', 'Value', 'Description'],
     Logs: ['ID', 'Timestamp', 'User', 'Action', 'Target', 'Detail'],
     AuditLogs: [
