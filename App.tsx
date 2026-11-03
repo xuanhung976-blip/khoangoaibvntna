@@ -30,6 +30,7 @@ const TechniquesPage = page(() => import('./features/techniques/TechniquesPage')
 const CommunicationPage = page(() => import('./features/communication/CommunicationPage'), 'CommunicationPage');
 const ResearchPage = page(() => import('./features/research/ResearchPage'), 'ResearchPage');
 const MeetingsPage = page(() => import('./features/meetings/MeetingsPage'), 'MeetingsPage');
+const MedicalEnglishPage = page(() => import('./features/learning/MedicalEnglishPage'), 'MedicalEnglishPage');
 const InventoryPage = page(() => import('./features/inventory/InventoryPage'), 'InventoryPage');
 const FiveSPage = page(() => import('./features/fives/FiveSPage'), 'FiveSPage');
 const UsersPage = page(() => import('./features/admin/UsersPage'), 'UsersPage');
@@ -76,6 +77,7 @@ const AppRoutes: React.FC = () => (
         <Route path="/communication" element={<CommunicationPage />} />
         <Route path="/research" element={<ResearchPage />} />
         <Route path="/science-meetings" element={<MeetingsPage />} />
+        <Route path="/medical-english" element={<MedicalEnglishPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/5s" element={<FiveSPage />} />
         <Route path="/users" element={<ChiefOnly><UsersPage /></ChiefOnly>} />

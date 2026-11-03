@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   FlaskConical,
+  GraduationCap,
   HeartPulse,
   History,
   LayoutDashboard,
@@ -70,6 +71,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { path: '/research', module: 'research', label: 'Đề tài NCKH', icon: BookOpen, description: 'Đề tài & trích xuất mẫu nghiên cứu', keywords: 'nghien cuu khoa hoc de tai nckh' },
       { path: '/science-meetings', module: 'meetings', label: 'Sinh hoạt khoa học', icon: Presentation, description: 'Lịch sinh hoạt chuyên môn', keywords: 'sinh hoat khoa hoc shkh' },
+      { path: '/medical-english', module: 'english', label: 'Tiếng Anh Y khoa', icon: GraduationCap, description: 'Từ điển chuyên ngành, phòng thi AI, luyện VSTEP/APTIS', keywords: 'tieng anh y khoa dao tao hoc tap vstep aptis ngoai ngu' },
     ],
   },
   {

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>English Master — VSTEP · APTIS · Medical</title>
+  <meta name="description" content="Ứng dụng học tiếng Anh toàn diện: VSTEP, APTIS ESOL, Tiếng Anh Y khoa. Flashcard, Quiz, Dịch thuật và Từ điển chuyên ngành." />
+  <meta name="theme-color" content="#f6f8fc" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=8" />
+</head>
+<body>
+
+  <!-- Particle Canvas -->
+  <canvas id="particle-canvas"></canvas>
+
+  <!-- App Shell -->
+  <div class="app-container" id="app">
+
+    <!-- Sidebar Overlay (mobile) -->
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation">
+      <div class="sidebar-logo">
+        <div class="logo-icon">📚</div>
+        <h1>English Master</h1>
+        <p>VSTEP · APTIS · Medical</p>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section">Tổng quan</div>
+        <div class="nav-item" data-route="/" id="nav-dashboard">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">Dashboard</span>
+        </div>
+
+        <div class="nav-section">Kỳ thi</div>
+        <div class="nav-item" data-route="/vstep" id="nav-vstep">
+          <span class="nav-icon">📘</span>
+          <span class="nav-label">VSTEP Master</span>
+          <span class="nav-badge">B1~C1</span>
+        </div>
+        <div class="nav-item" data-route="/listening" id="nav-listening">
+          <span class="nav-icon">🎧</span>
+          <span class="nav-label">Listening AI Studio</span>
+          <span class="nav-badge" style="background:var(--teal);color:#fff">New</span>
+        </div>
+        <div class="nav-item" data-route="/ai-tutor" id="nav-ai-tutor">
+          <span class="nav-icon">🤖</span>
+          <span class="nav-label">Phòng Thi Ảo AI</span>
+          <span class="nav-badge" style="background:linear-gradient(135deg, var(--purple), #ec4899);color:#fff">1-on-1</span>
+        </div>
+        <div class="nav-item" data-route="/mock-exam" id="nav-mock-exam">
+          <span class="nav-icon">🎓</span>
+          <span class="nav-label">Thi Thử VSTEP</span>
+          <span class="nav-badge" style="background:#ef4444;color:#fff">Hot</span>
+        </div>
+        <div class="nav-item" data-route="/aptis" id="nav-aptis">
+          <span class="nav-icon">📗</span>
+          <span class="nav-label">APTIS ESOL</span>
+        </div>
+
+        <div class="nav-section">Y Khoa</div>
+        <div class="nav-item" data-route="/medical" id="nav-medical">
+          <span class="nav-icon">🩺</span>
+          <span class="nav-label">Medical Hub</span>
+        </div>
+        <div class="nav-item" data-route="/medical/thyroid" id="nav-thyroid" style="padding-left:2.5rem">
+          <span class="nav-icon">🦋</span>
+          <span class="nav-label">Tuyến giáp</span>
+        </div>
+        <div class="nav-item" data-route="/medical/diabetes" id="nav-diabetes" style="padding-left:2.5rem">
+          <span class="nav-icon">🩸</span>
+          <span class="nav-label">Đái tháo đường</span>
+        </div>
+
+        <div class="nav-section">Công cụ</div>
+        <div class="nav-item" data-route="/paraphraser" id="nav-paraphraser">
+          <span class="nav-icon">🚀</span>
+          <span class="nav-label">B2 Paraphraser</span>
+          <span class="nav-badge" style="background:var(--teal);color:#fff">New</span>
+        </div>
+        <div class="nav-item" data-route="/profiler" id="nav-profiler">
+          <span class="nav-icon">🔍</span>
+          <span class="nav-label">CEFR Profiler</span>
+          <span class="nav-badge" style="background:var(--purple);color:#fff">AI</span>
+        </div>
+        <div class="nav-item" data-route="/translator" id="nav-translator">
+          <span class="nav-icon">🌐</span>
+          <span class="nav-label">Dịch thuật</span>
+        </div>
+        <div class="nav-item" data-route="/statistics" id="nav-statistics">
+          <span class="nav-icon">📈</span>
+          <span class="nav-label">Thống kê</span>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer" style="display:flex; flex-direction:column; gap:8px;">
+        <div id="nav-ai-status-pill" class="chip" style="cursor:pointer; justify-content:center; padding:6px 10px; font-weight:700; font-size:0.75rem;" title="Click để cấu hình Gemini AI">
+          🤖 <span>Cài đặt AI</span>
+        </div>
+        <div class="online-status">
+          <div class="status-dot" id="status-dot"></div>
+          <span id="status-text">Online</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <!-- Mobile Top Bar -->
+      <div class="mobile-topbar">
+        <div class="hamburger" id="hamburger" role="button" aria-label="Toggle menu" tabindex="0">
+          <span></span><span></span><span></span>
+        </div>
+        <div style="font-weight:800;font-size:1rem;background:var(--gradient-primary);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">
+          English Master
+        </div>
+        <div style="width:32px"></div>
+      </div>
+
+      <!-- Page Content -->
+      <main id="page-content" role="main">
+        <!-- Content rendered by router -->
+      </main>
+    </div>
+  </div>
+
+  <!-- Global Modals (dynamically added) -->
+  <div id="modal-root"></div>
+
+  <!-- App Script -->
+  <script type="module" src="app.js?v=6"></script>
+</body>
+</html>

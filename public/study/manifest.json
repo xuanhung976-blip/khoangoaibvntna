@@ -1,0 +1,17 @@
+{
+  "name": "English Master - VSTEP APTIS Medical",
+  "short_name": "English Master",
+  "description": "Ôn thi VSTEP, APTIS ESOL và học tiếng Anh Y khoa chuyên ngành",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f0f1a",
+  "theme_color": "#6c63ff",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "assets/icons/icon-72.png", "sizes": "72x72", "type": "image/png" },
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories": ["education", "medical"],
+  "lang": "vi"
+}
