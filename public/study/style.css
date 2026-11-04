@@ -1937,3 +1937,203 @@ img { max-width: 100%; height: auto; display: block; }
   border-color: var(--purple);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
 }
+
+
+/* =====================================================
+   MOBILE ERGONOMICS & EMBEDDED OPTIMIZATIONS
+   ===================================================== */
+.sidebar-close-btn {
+  display: none;
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  align-items: center;
+  justify-content: center;
+  background: #f1f5f9;
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: all var(--transition-fast);
+  z-index: 10;
+}
+.sidebar-close-btn:hover {
+  background: #e2e8f0;
+  color: var(--text-primary);
+}
+
+.is-embedded .mobile-topbar {
+  padding: 8px 12px;
+  min-height: 44px;
+}
+.is-embedded .mobile-topbar > div:nth-child(2) {
+  font-size: 0.92rem !important;
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    width: min(84vw, 280px) !important;
+  }
+  .sidebar-close-btn {
+    display: flex !important;
+  }
+  .sidebar-logo {
+    position: relative;
+    padding: var(--space-lg) var(--space-md) !important;
+  }
+  .mobile-topbar {
+    padding: 8px 14px !important;
+    min-height: 46px !important;
+  }
+  .main-content {
+    padding: 12px 14px !important;
+    margin-left: 0 !important;
+    max-width: 100% !important;
+  }
+  .page-title {
+    font-size: 1.35rem !important;
+    line-height: 1.3 !important;
+    margin-bottom: 4px !important;
+  }
+  .page-subtitle {
+    font-size: 0.8rem !important;
+    margin-bottom: 12px !important;
+  }
+  .page-header {
+    margin-bottom: 14px !important;
+  }
+  .module-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+  .module-card {
+    padding: 14px 16px !important;
+    border-radius: 14px !important;
+  }
+  .module-icon-wrap {
+    width: 44px !important;
+    height: 44px !important;
+    font-size: 1.3rem !important;
+    border-radius: 10px !important;
+  }
+  .module-card-title {
+    font-size: 1.05rem !important;
+  }
+  .module-card-subtitle {
+    font-size: 0.82rem !important;
+    margin-bottom: 8px !important;
+  }
+  .module-card-meta {
+    margin-top: 8px !important;
+  }
+
+  /* Tabs horizontal touch scroll */
+  .tabs {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+    padding: 3px !important;
+    gap: 4px !important;
+    margin-bottom: 12px !important;
+    border-radius: 12px !important;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    flex: 0 0 auto !important;
+    padding: 7px 12px !important;
+    font-size: 0.8rem !important;
+    border-radius: 9px !important;
+    white-space: nowrap !important;
+  }
+
+  /* Flashcards */
+  .flashcard-container {
+    height: auto !important;
+    min-height: 280px !important;
+    max-height: 400px !important;
+    aspect-ratio: 4/3 !important;
+    max-width: 100% !important;
+    margin: 0 auto 12px !important;
+  }
+  .flashcard-face {
+    padding: 16px 14px !important;
+    border-radius: 16px !important;
+  }
+  .flashcard-term {
+    font-size: 1.45rem !important;
+    line-height: 1.3 !important;
+    word-break: break-word !important;
+  }
+  .flashcard-vietnamese {
+    font-size: 1.3rem !important;
+    margin-bottom: 8px !important;
+    line-height: 1.3 !important;
+  }
+  .flashcard-definition {
+    font-size: 0.85rem !important;
+    line-height: 1.5 !important;
+    max-height: 85px !important;
+    margin-bottom: 8px !important;
+  }
+  .flashcard-back {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    justify-content: flex-start !important;
+    padding-top: 36px !important;
+  }
+  .rating-buttons {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+    margin-top: 12px !important;
+  }
+  .rating-btn {
+    padding: 10px 8px !important;
+    font-size: 0.82rem !important;
+    min-height: 44px !important;
+    border-radius: 10px !important;
+  }
+
+  /* Quiz */
+  .quiz-option {
+    padding: 10px 12px !important;
+    min-height: 46px !important;
+    font-size: 0.9rem !important;
+    border-radius: 12px !important;
+    gap: 10px !important;
+  }
+  .quiz-option:hover:not(.disabled) {
+    transform: none !important;
+  }
+  .option-letter {
+    width: 24px !important;
+    height: 24px !important;
+    font-size: 0.75rem !important;
+  }
+
+  /* AI Tutor chat dynamic height */
+  .glass-card[style*="height: 600px"] {
+    height: calc(100dvh - 190px) !important;
+    min-height: 360px !important;
+    max-height: 600px !important;
+  }
+  #ai-chat-transcript {
+    padding: 12px 10px !important;
+    gap: 12px !important;
+  }
+
+  /* Input zoom prevention on iOS */
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+
+  button, [role="button"], a {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+}

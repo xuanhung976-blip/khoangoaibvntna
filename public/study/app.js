@@ -1,3 +1,9 @@
+// Detect embedded iframe mode
+if (window.self !== window.top) {
+  document.documentElement.classList.add('is-embedded');
+  document.body.classList.add('is-embedded');
+}
+
 /**
  * English Master — Main Application
  * VSTEP | APTIS ESOL | Medical English
