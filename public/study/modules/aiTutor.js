@@ -374,8 +374,8 @@ Discuss the topic deeply. Point out academic collocations they could use. Ask a 
           btnMic.style.color = '#ffffff';
           btnMic.style.borderColor = '#ef4444';
           if (micIcon) micIcon.textContent = '⏹️';
-          if (micLabel) micLabel.textContent = 'Đang nghe...';
-          chatInput.placeholder = 'Đang lắng nghe giọng nói tiếng Anh của bạn... (Bấm nút đỏ để dừng)';
+          if (micLabel) micLabel.textContent = 'Gửi';
+          chatInput.placeholder = 'Đang lắng nghe giọng nói tiếng Anh của bạn... (Nói xong bấm Gửi)'; 
         };
 
         recognition.onresult = (event) => {
@@ -425,6 +425,16 @@ Discuss the topic deeply. Point out academic collocations they could use. Ask a 
           try { recognition.stop(); } catch (_) {}
         }
         stopRecording();
+
+        // Auto-send spoken text to AI
+        const text = chatInput.value.trim();
+        if (text) {
+          sendMessage(text);
+          chatInput.value = '';
+          chatInput.style.height = 'auto';
+        } else {
+          showToast('Chưa nghe rõ giọng nói. Bạn có thể nói lại vào micro hoặc gõ tin nhắn.', 'info');
+        }
       } else {
         shouldKeepRecording = true;
         try {

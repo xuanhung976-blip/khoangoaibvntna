@@ -26,7 +26,9 @@ export const gemini = {
   getApiKey() {
     if (typeof localStorage !== 'undefined') {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) return stored;
+      if (stored && (stored.startsWith('AIzaSy') || stored.startsWith('AQ.') || stored.length > 25)) {
+        return stored.trim();
+      }
       if (BUILTIN_API_KEY) {
         localStorage.setItem(STORAGE_KEY, BUILTIN_API_KEY);
         return BUILTIN_API_KEY;

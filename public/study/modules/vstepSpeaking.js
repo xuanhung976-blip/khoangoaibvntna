@@ -439,6 +439,21 @@ export function renderSpeakingSimulator(container) {
     const transcriptInput = el.querySelector('#speaking-transcript-input');
     const feedbackBox = el.querySelector('#speaking-ai-feedback');
     const audioContainer = el.querySelector('#speaking-audio-player-container');
+    const btnSubmitToAi = el.querySelector('#btn-submit-to-ai');
+    const wordCountBadge = el.querySelector('#speaking-word-count');
+
+    function updateWordCount() {
+      if (!wordCountBadge) return;
+      const count = (transcriptInput.value.trim().match(/\S+/g) || []).length;
+      wordCountBadge.textContent = `${count} từ`;
+    }
+    transcriptInput?.addEventListener('input', updateWordCount);
+
+    btnSubmitToAi?.addEventListener('click', () => {
+      stopRecording();
+      stopTimer();
+      evaluateSpokenSpeech(transcriptInput.value.trim(), feedbackBox);
+    });
 
     function updateTimerDisplay() {
       const mins = Math.floor(timerSeconds / 60).toString().padStart(2, '0');
@@ -494,6 +509,8 @@ export function renderSpeakingSimulator(container) {
     btnStart?.addEventListener('click', async () => {
       if (isRecording) {
         stopRecording();
+        stopTimer();
+        evaluateSpokenSpeech(transcriptInput.value.trim(), feedbackBox);
         return;
       }
 
@@ -603,14 +620,15 @@ export function renderSpeakingSimulator(container) {
   }
 
   async function evaluateSpokenSpeech(text, container) {
-    if (!text || text.split(/\s+/).filter(Boolean).length < 15) {
+    if (!text) {
       container.classList.remove('hidden');
       container.innerHTML = `
-        <div class="glass-card-sm" style="padding:16px; background:#fef2f2; border:1px solid #fecaca; border-radius:10px;">
-          <strong style="color:#b91c1c;">⚠️ Chưa đủ độ dài để AI chấm điểm:</strong>
+        <div class="glass-card-sm" style="padding:16px; background:#fffbeb; border:1px solid #fde68a; border-radius:10px;">
+          <strong style="color:#b45309;">⚠️ Chưa có nội dung câu trả lời để AI chấm điểm:</strong>
           <p class="text-xs text-secondary mt-xs" style="line-height:1.6;">
-            AI cần ít nhất 15-20 từ tiếng Anh để đánh giá các tiêu chí VSTEP (Fluency, Grammar, Lexical, Band B2/C1).<br/>
-            ${currentAudioUrl ? '👉 Bạn đã thu âm thành công ở khung trên! Bạn có thể nghe lại và gõ bổ sung câu trả lời vào ô văn bản ở trên rồi bấm <strong>⏹️ Dừng & Đánh giá</strong>.' : '👉 Hãy bấm <strong>Bắt đầu Ghi âm & Trả lời</strong> và nói vào Micro, hoặc gõ trực tiếp câu trả lời vào khung.'}
+            Hệ thống chưa nhận diện được chữ từ micro. Bạn vui lòng:<br/>
+            1. Bấm vào khung <strong>"Lời nói của bạn"</strong> ở trên để gõ hoặc chỉnh sửa câu trả lời, rồi bấm <strong>🚀 Gửi cho AI chấm điểm ngay</strong>.<br/>
+            2. Hoặc nếu bạn dùng điện thoại/Safari, bấm <a href="/study/index.html#/vstep" target="_blank" style="color:var(--purple); font-weight:700; text-decoration:underline;">Mở tab riêng tại đây ↗</a> để trình duyệt cấp đầy đủ quyền Micro.
           </p>
         </div>
       `;
