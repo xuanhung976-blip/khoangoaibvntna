@@ -651,6 +651,99 @@ Return strictly raw JSON format without markdown code fences.`;
 
     const raw = await this.generate(prompt);
     return this.cleanAndParseJson(raw, null);
+  },
+  // 13. Generate with Multimodal Audio Input
+  async generateWithAudio(base64Audio, mimeType, prompt, systemInstruction = '') {
+    const key = this.getApiKey();
+    if (!key) throw new Error('Vui lòng cài đặt Gemini API Key để kích hoạt tính năng AI.');
+
+    const contents = [{
+      role: 'user',
+      parts: [
+        { inline_data: { mime_type: mimeType || 'audio/wav', data: base64Audio } },
+        { text: systemInstruction ? `[SYSTEM: ${systemInstruction}]\n\n${prompt}` : prompt }
+      ]
+    }];
+
+    const payload = {
+      contents,
+      generationConfig: {
+        temperature: 0.6,
+        maxOutputTokens: 8192
+      }
+    };
+
+    let lastError = null;
+    for (const model of PREFERRED_MODELS) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (text) {
+            this.lastActiveModel = model;
+            return text;
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          lastError = new Error(errData?.error?.message || `HTTP ${res.status}`);
+        }
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError || new Error('Lỗi gọi Gemini Audio API.');
+  },
+
+  // 14. Chat Tutor with Voice Audio
+  async chatTutorWithAudio(base64Audio, mimeType = 'audio/wav', systemInstruction = '') {
+    const baseInstruction = `You are "VSTEP AI Master" - an encouraging, expert Native English Examiner and Tutor.
+The student has sent you an audio voice recording.
+Your response MUST follow this exact structure:
+1. First, transcribe what the student said in English:
+**🗣️ Lời bạn vừa nói:** "<verbatim transcription of candidate's speech>" (if silent or inaudible, write "(Không nghe rõ âm thanh lời nói)")
+2. Second, evaluate briefly:
+- Pronunciation & Intonation note
+- Praise good points & suggest 1 B2 vocabulary/grammar upgrade
+- Estimated Band (B1, B2, or C1)
+3. Third, continue the conversation or ask the next VSTEP exam question.
+Always be warm, encouraging and concise.`;
+
+    const promptText = `Please listen to the attached student voice recording and provide your response as the VSTEP Speaking Examiner.`;
+    return await this.generateWithAudio(base64Audio, mimeType, promptText, systemInstruction || baseInstruction);
+  },
+
+  // 15. VSTEP Speaking Evaluation with Voice Audio
+  async evaluateSpeakingWithAudio(partTitle, base64Audio, mimeType = 'audio/wav') {
+    const prompt = `You are an expert VSTEP Speaking examiner evaluating a student's voice recording:
+PART: ${partTitle}
+Please listen carefully to the candidate's audio.
+1. Transcribe what they said verbatim in English.
+2. Evaluate according to VSTEP criteria:
+   - Fluency & Coherence
+   - Lexical Resource (B2 Vocabulary)
+   - Grammatical Range & Accuracy
+   - Pronunciation & Natural Delivery
+3. Return strictly in JSON format:
+{
+  "transcript": "Exact transcription of candidate speech",
+  "predictedBand": "6.0",
+  "cefr": "B2",
+  "fluencyFeedback": "Nhận xét độ trôi chảy bằng tiếng Việt",
+  "lexicalFeedback": "Nhận xét từ vựng bằng tiếng Việt",
+  "grammarFeedback": "Nhận xét ngữ pháp bằng tiếng Việt",
+  "upgradedModel": "How a native or C1 speaker would answer naturally in 3-4 sentences"
+}
+Return raw JSON only.`;
+
+    const raw = await this.generateWithAudio(base64Audio, mimeType, prompt);
+    return this.cleanAndParseJson(raw);
   }
 };
 

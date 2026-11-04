@@ -5,6 +5,7 @@
  */
 
 import gemini from '../utils/gemini.js';
+import { AudioRecorder } from '../utils/audioRecorder.js';
 import { speak, showToast } from '../utils/helpers.js';
 import { openGeminiConfigModal } from './aiConfig.js';
 
@@ -338,6 +339,57 @@ Discuss the topic deeply. Point out academic collocations they could use. Ask a 
     }
   }
 
+  
+  async function sendAudioMessage(base64Audio, mimeType, durationSeconds) {
+    chatHistory.push({
+      role: 'user',
+      text: `🎙️ *[Đoạn ghi âm giọng nói ${durationSeconds}s - Đang gửi AI phân tích...]*`
+    });
+    renderChatMessages();
+
+    const indicator = container.querySelector('#ai-typing-indicator');
+    if (indicator) indicator.classList.remove('hidden');
+
+    try {
+      let systemPrompt = '';
+      if (activeMode === 'speaking_part1') {
+        systemPrompt = `You are a certified VSTEP Speaking Examiner conducting Part 1 (Social Interaction). 
+Follow this format strictly:
+1. **🗣️ Lời bạn vừa nói:** "<transcription of candidate speech in English>" (if silent, state "(Không nghe rõ âm thanh lời nói)")
+2. **🎯 Đánh giá VSTEP:** Brief evaluation of pronunciation, grammar, vocabulary, and predicted CEFR Band (B1, B2, or C1).
+3. **👉 Câu hỏi tiếp theo:** Ask the next natural Part 1 question.`;
+      } else if (activeMode === 'speaking_part2') {
+        systemPrompt = `You are a certified VSTEP Speaking Examiner conducting Part 2 (Solution Discussion). 
+Follow this format strictly:
+1. **🗣️ Lời bạn vừa nói:** "<transcription of candidate speech in English>"
+2. **🎯 Đánh giá VSTEP:** Evaluate their choice (Answer, Reason, Example), pronunciation, and predicted Band.
+3. **👉 Phản biện:** Challenge them with a realistic follow-up question.`;
+      } else if (activeMode === 'speaking_part3') {
+        systemPrompt = `You are a certified VSTEP Speaking Examiner conducting Part 3 (Topic Development).
+Follow this format strictly:
+1. **🗣️ Lời bạn vừa nói:** "<transcription of candidate speech in English>"
+2. **🎯 Đánh giá VSTEP:** Evaluate their elaboration, academic vocabulary, and predicted Band.
+3. **👉 Câu hỏi đào sâu:** Ask a follow-up question.`;
+      } else {
+        systemPrompt = `You are VSTEP AI Master.
+Follow this format strictly:
+1. **🗣️ Lời bạn vừa nói:** "<transcription of candidate speech in English>"
+2. Response and feedback.`;
+      }
+
+      const reply = await gemini.chatTutorWithAudio(base64Audio, mimeType, systemPrompt);
+      chatHistory.push({ role: 'model', text: reply || 'I heard your audio! Let\'s continue.' });
+    } catch (err) {
+      chatHistory.push({
+        role: 'model',
+        text: `⚠️ **Không thể kết nối với Gemini AI:** ${err.message}\n\n*Vui lòng kiểm tra lại kết nối mạng hoặc thử nói to rõ hơn gần micro.*`
+      });
+    } finally {
+      if (indicator) indicator.classList.add('hidden');
+      renderChatMessages();
+    }
+  }
+
   function setupMicrophone() {
     const btnMic = container.querySelector('#btn-ai-mic');
     const micIcon = container.querySelector('#ai-mic-icon');
@@ -346,18 +398,11 @@ Discuss the topic deeply. Point out academic collocations they could use. Ask a 
 
     if (!btnMic) return;
 
-    if (!isSpeechSupported) {
-      btnMic.style.opacity = '0.7';
-      btnMic.title = 'Trình duyệt chưa hỗ trợ Web Speech API. Bạn có thể gõ câu trả lời hoặc mở trong Chrome/Edge.';
-      btnMic.addEventListener('click', () => {
-        showToast('Trình duyệt chưa hỗ trợ Web Speech. Vui lòng gõ tin nhắn trực tiếp hoặc mở bằng Chrome/Edge.', 'info');
-      });
-      return;
-    }
-
+    let audioRecorder = null;
     let shouldKeepRecording = false;
 
     function initRecognition() {
+      if (!isSpeechSupported) return;
       if (recognition) {
         try { recognition.abort(); } catch (_) {}
       }
@@ -375,7 +420,7 @@ Discuss the topic deeply. Point out academic collocations they could use. Ask a 
           btnMic.style.borderColor = '#ef4444';
           if (micIcon) micIcon.textContent = '⏹️';
           if (micLabel) micLabel.textContent = 'Gửi';
-          chatInput.placeholder = 'Đang lắng nghe giọng nói tiếng Anh của bạn... (Nói xong bấm Gửi)'; 
+          chatInput.placeholder = 'Đang lắng nghe giọng nói tiếng Anh của bạn... (Nói xong bấm Gửi)';
         };
 
         recognition.onresult = (event) => {
@@ -391,32 +436,19 @@ Discuss the topic deeply. Point out academic collocations they could use. Ask a 
         };
 
         recognition.onerror = (event) => {
-          console.warn('Speech recognition error:', event.error);
-          if (event.error === 'no-speech' || event.error === 'aborted') {
-            return;
-          }
-          stopRecording();
-          if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-            showToast('Vui lòng cấp quyền truy cập Micro trên trình duyệt để luyện nói.', 'warning');
-          }
+          console.warn('Speech recognition warning:', event.error);
+          if (event.error === 'no-speech' || event.error === 'aborted') return;
         };
 
         recognition.onend = () => {
           if (shouldKeepRecording) {
-            try {
-              recognition.start();
-              return;
-            } catch (_) {}
+            try { recognition.start(); } catch (_) {}
           }
-          stopRecording();
-          chatInput.placeholder = 'Nhập câu trả lời tiếng Anh hoặc câu hỏi của bạn... (Bấm Enter để gửi)';
         };
       } catch (e) {
-        console.warn('SpeechRecognition init error:', e);
+        console.warn('SpeechRecognition init warning:', e);
       }
     }
-
-    initRecognition();
 
     btnMic.addEventListener('click', async () => {
       if (isRecording) {
@@ -424,46 +456,68 @@ Discuss the topic deeply. Point out academic collocations they could use. Ask a 
         if (recognition) {
           try { recognition.stop(); } catch (_) {}
         }
-        stopRecording();
+        stopRecordingUI();
 
-        // Auto-send spoken text to AI
+        // 1. Stop audio recorder
+        let audioRes = null;
+        if (audioRecorder) {
+          try {
+            audioRes = await audioRecorder.stop();
+          } catch (stopErr) {
+            console.warn('AudioRecorder stop warning:', stopErr);
+          }
+          audioRecorder = null;
+        }
+
+        // 2. Check if text is present
         const text = chatInput.value.trim();
         if (text) {
           sendMessage(text);
           chatInput.value = '';
           chatInput.style.height = 'auto';
+          return;
+        }
+
+        // 3. Fallback: If text is empty (Safari iOS / iframe restriction), send real audio to Gemini!
+        if (audioRes && audioRes.base64 && audioRes.durationSeconds >= 1) {
+          sendAudioMessage(audioRes.base64, audioRes.mimeType, audioRes.durationSeconds);
         } else {
-          showToast('Chưa nghe rõ giọng nói. Bạn có thể nói lại vào micro hoặc gõ tin nhắn.', 'info');
+          showToast('Thời gian nói quá ngắn. Bạn vui lòng bấm và nói to rõ vào Micro.', 'info');
         }
       } else {
         shouldKeepRecording = true;
+        isRecording = true;
+        btnMic.style.background = '#ef4444';
+        btnMic.style.color = '#ffffff';
+        btnMic.style.borderColor = '#ef4444';
+        if (micIcon) micIcon.textContent = '⏹️';
+        if (micLabel) micLabel.textContent = 'Gửi';
+        chatInput.placeholder = 'Đang thu âm giọng nói tiếng Anh... (Nói xong bấm Gửi)';
+
+        // Start hardware AudioRecorder (captures raw PCM WAV)
         try {
-          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            stream.getTracks().forEach(t => t.stop());
-          }
-        } catch (permErr) {
-          console.warn('Microphone permission request error:', permErr);
-          if (permErr.name === 'NotAllowedError') {
-            showToast('Vui lòng cấp quyền Micro trên trình duyệt.', 'warning');
-            return;
-          }
+          audioRecorder = new AudioRecorder();
+          await audioRecorder.start();
+        } catch (recErr) {
+          console.warn('AudioRecorder start error:', recErr);
+          showToast('Vui lòng cấp quyền Micro trên trình duyệt để ghi âm.', 'warning');
+          stopRecordingUI();
+          return;
         }
 
-        initRecognition();
-        try {
-          recognition.start();
-        } catch (e) {
-          console.warn('Speech start error:', e);
+        // Parallel: Start Web Speech API if supported for live text preview
+        if (isSpeechSupported) {
+          initRecognition();
           try {
-            recognition.stop();
-            setTimeout(() => { try { recognition.start(); } catch (_) {} }, 200);
-          } catch (_) {}
+            recognition.start();
+          } catch (e) {
+            console.warn('Speech start warning:', e);
+          }
         }
       }
     });
 
-    function stopRecording() {
+    function stopRecordingUI() {
       shouldKeepRecording = false;
       isRecording = false;
       btnMic.style.background = '';
@@ -471,6 +525,7 @@ Discuss the topic deeply. Point out academic collocations they could use. Ask a 
       btnMic.style.borderColor = '';
       if (micIcon) micIcon.textContent = '🎙️';
       if (micLabel) micLabel.textContent = 'Nói';
+      chatInput.placeholder = 'Nhập câu trả lời tiếng Anh hoặc câu hỏi của bạn... (Bấm Enter để gửi)';
     }
   }
 

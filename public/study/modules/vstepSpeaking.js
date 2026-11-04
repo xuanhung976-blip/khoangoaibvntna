@@ -8,6 +8,7 @@ import { VSTEP_SPEAKING } from '../data/vstep/speaking.js';
 import { speak, showToast } from '../utils/helpers.js';
 import { analyzeText } from './profiler.js';
 import gemini from '../utils/gemini.js';
+import { AudioRecorder } from '../utils/audioRecorder.js';
 
 export function renderSpeakingSimulator(container) {
   let activePart = 'part2'; // Start with Part 2 (most requested for B2)
@@ -23,6 +24,8 @@ export function renderSpeakingSimulator(container) {
   let mediaRecorder = null;
   let audioChunks = [];
   let currentAudioUrl = null;
+  let universalRecorder = null;
+  let lastAudioResult = null;
 
   // Initialize Speech Recognition if supported
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -506,8 +509,16 @@ export function renderSpeakingSimulator(container) {
       `;
     }
 
+    let elCurrent = el;
     btnStart?.addEventListener('click', async () => {
       if (isRecording) {
+        if (universalRecorder) {
+          try {
+            lastAudioResult = await universalRecorder.stop();
+            if (lastAudioResult) renderAudioPlayer(lastAudioResult.url);
+          } catch (_) {}
+          universalRecorder = null;
+        }
         stopRecording();
         stopTimer();
         evaluateSpokenSpeech(transcriptInput.value.trim(), feedbackBox);
@@ -526,7 +537,13 @@ export function renderSpeakingSimulator(container) {
       recordBtnText.textContent = 'Đang thu âm... (Bấm để dừng)';
       btnStop.disabled = false;
 
-      // 1. Request microphone permission explicitly via getUserMedia
+      // 1. Start Universal Audio Recorder (captures raw PCM WAV)
+      try {
+        universalRecorder = new AudioRecorder();
+        await universalRecorder.start();
+      } catch (arErr) {
+        console.warn('universalRecorder start warning:', arErr);
+      }
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -612,15 +629,93 @@ export function renderSpeakingSimulator(container) {
       startTimer(120, 'Speaking', '#ef4444');
     });
 
-    btnStop?.addEventListener('click', () => {
+    btnStop?.addEventListener('click', async () => {
+      if (universalRecorder) {
+        try {
+          lastAudioResult = await universalRecorder.stop();
+          if (lastAudioResult) renderAudioPlayer(lastAudioResult.url);
+        } catch (_) {}
+        universalRecorder = null;
+      }
       stopRecording();
       stopTimer();
       evaluateSpokenSpeech(transcriptInput.value.trim(), feedbackBox);
     });
   }
 
+  
+  async function evaluateSpokenAudio(base64Audio, mimeType, container) {
+    container.classList.remove('hidden');
+    container.innerHTML = `
+      <div class="glass-card-sm text-center" style="padding:20px;">
+        <div class="spinner" style="margin:0 auto 8px; width:22px; height:22px; border-width:2px;"></div>
+        <div class="text-xs text-muted">Gemini AI đang nghe trực tiếp giọng nói từ đoạn ghi âm và chấm điểm Speaking...</div>
+      </div>
+    `;
+
+    try {
+      const aiSp = await gemini.evaluateSpeakingWithAudio(activePart, base64Audio, mimeType);
+      if (aiSp) {
+        // Also update transcript input with what Gemini transcribed
+        const transcriptInput = elCurrent?.querySelector('#speaking-transcript-input') || container.parentElement.querySelector('#speaking-transcript-input');
+        if (transcriptInput && aiSp.transcript && aiSp.transcript !== '[No speech detected]') {
+          transcriptInput.value = aiSp.transcript;
+        }
+
+        container.innerHTML = `
+          <div class="glass-card-sm animate-fade-in mt-md" style="padding:20px; background:rgba(99,102,241,0.03); border:1px solid rgba(99,102,241,0.25); border-radius:12px;">
+            <div class="flex items-center justify-between mb-sm flex-wrap gap-xs">
+              <span style="font-weight:900; font-size:1.1rem; color:var(--purple); display:flex; align-items:center; gap:6px;">
+                🤖 Đánh giá VSTEP Speaking AI Examiner (Gemini Voice Recognition)
+              </span>
+              <span class="level-badge level-${aiSp.cefr?.toLowerCase() || 'b2'}" style="font-size:0.95rem; padding:4px 14px; font-weight:800;">
+                Band: ${aiSp.predictedBand || '6.0'} (${aiSp.cefr || 'B2'})
+              </span>
+            </div>
+
+            ${aiSp.transcript ? `
+              <div class="mb-sm" style="padding:10px 14px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0; font-size:0.85rem;">
+                <strong>🗣️ AI đã nghe bạn nói:</strong> <em>"${aiSp.transcript}"</em>
+              </div>
+            ` : ''}
+
+            <div style="font-size:0.88rem; line-height:1.6; color:var(--text-secondary); margin-bottom:12px;">
+              <div style="margin-bottom:6px;">🗣️ <strong>Độ trôi chảy (Fluency):</strong> ${aiSp.fluencyFeedback || 'Đã ghi nhận bài nói'}</div>
+              <div style="margin-bottom:6px;">📚 <strong>Vốn từ vựng (Lexical):</strong> ${aiSp.lexicalFeedback || 'Đã ghi nhận vốn từ'}</div>
+              <div style="margin-bottom:6px;">✍️ <strong>Độ chính xác ngữ pháp (Grammar):</strong> ${aiSp.grammarFeedback || 'Đã ghi nhận cấu trúc'}</div>
+            </div>
+
+            ${aiSp.upgradedModel ? `
+              <div style="padding:12px; background:#ffffff; border:1px solid var(--border-glass); border-radius:8px;">
+                <div class="text-xs font-bold text-accent mb-xs" style="color:var(--purple);">✨ Gợi ý câu trả lời tự nhiên của người bản ngữ / C1:</div>
+                <div class="text-sm" style="font-style:italic; line-height:1.6; color:var(--text-primary);">"${aiSp.upgradedModel}"</div>
+                <button class="btn btn-ghost btn-sm mt-xs btn-speak-upgraded" style="font-size:0.75rem;">🔊 Luyện nghe câu nâng cấp</button>
+              </div>
+            ` : ''}
+          </div>
+        `;
+
+        container.querySelector('.btn-speak-upgraded')?.addEventListener('click', () => {
+          speak(aiSp.upgradedModel);
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn('Gemini audio eval error:', err);
+      container.innerHTML = `
+        <div class="glass-card-sm" style="padding:16px; background:#fef2f2; border:1px solid #fecaca; border-radius:10px;">
+          <strong style="color:#b91c1c;">❌ Lỗi phân tích âm thanh:</strong> ${err.message}
+        </div>
+      `;
+    }
+  }
+
   async function evaluateSpokenSpeech(text, container) {
     if (!text) {
+      if (lastAudioResult && lastAudioResult.base64 && lastAudioResult.durationSeconds >= 1) {
+        evaluateSpokenAudio(lastAudioResult.base64, lastAudioResult.mimeType, container);
+        return;
+      }
       container.classList.remove('hidden');
       container.innerHTML = `
         <div class="glass-card-sm" style="padding:16px; background:#fffbeb; border:1px solid #fde68a; border-radius:10px;">
