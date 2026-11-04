@@ -5,7 +5,7 @@
  */
 
 import { VSTEP_SPEAKING } from '../data/vstep/speaking.js';
-import { speak } from '../utils/helpers.js';
+import { speak, showToast } from '../utils/helpers.js';
 import { analyzeText } from './profiler.js';
 import gemini from '../utils/gemini.js';
 
@@ -17,7 +17,12 @@ export function renderSpeakingSimulator(container) {
   let timerMode = 'idle'; // 'idle', 'prep', 'speaking'
   let recognition = null;
   let isRecording = false;
+  let shouldKeepRecording = false;
   let transcribedText = '';
+  let mediaStream = null;
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let currentAudioUrl = null;
 
   // Initialize Speech Recognition if supported
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -367,16 +372,25 @@ export function renderSpeakingSimulator(container) {
         </div>
 
         <!-- Recording & Action Bar -->
-        <div class="flex items-center gap-md mb-md flex-wrap">
+        <div class="flex items-center gap-md mb-sm flex-wrap">
           <button class="btn btn-primary" id="btn-start-record" style="padding:10px 22px; font-weight:700; border-radius:10px; display:inline-flex; align-items:center; gap:8px;">
             <span id="record-dot" style="width:10px; height:10px; border-radius:50%; background:#fff;"></span>
             <span id="record-btn-text">Bắt đầu Ghi âm & Trả lời</span>
           </button>
           <button class="btn btn-secondary" id="btn-stop-record" disabled>⏹️ Dừng & Đánh giá</button>
-          <span class="text-xs text-muted" id="speech-support-hint">
-            ${isSpeechSupported ? '✅ Hỗ trợ micro nhận diện giọng nói tiếng Anh' : 'ℹ️ Trình duyệt không có Web Speech, bạn có thể gõ transcript vào khung bên dưới.'}
+          <span class="text-xs text-muted" id="speech-support-hint" style="display:flex; align-items:center; gap:6px;">
+            ${isSpeechSupported ? '✅ Đã kích hoạt Micro nhận diện giọng nói (en-US)' : 'ℹ️ Sẵn sàng thu âm giọng nói qua Micro'}
           </span>
         </div>
+
+        <!-- In-Iframe/Safari Quick Helper Link -->
+        <div class="text-xs text-muted mb-md" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; background:#f8fafc; padding:8px 12px; border-radius:8px; border:1px solid #f1f5f9;">
+          <span>💡 Gặp sự cố Micro hoặc dùng iPhone/Safari?</span>
+          <a href="/study/index.html#/vstep" target="_blank" style="color:var(--purple); font-weight:700; text-decoration:underline;">Mở tab riêng để cấp quyền Micro mượt mà ↗</a>
+        </div>
+
+        <!-- Audio Player Container for voice playback -->
+        <div id="speaking-audio-player-container" class="hidden mb-md"></div>
 
         <!-- Transcript live display / text area -->
         <div class="mb-md">
@@ -424,6 +438,7 @@ export function renderSpeakingSimulator(container) {
     const recordBtnText = el.querySelector('#record-btn-text');
     const transcriptInput = el.querySelector('#speaking-transcript-input');
     const feedbackBox = el.querySelector('#speaking-ai-feedback');
+    const audioContainer = el.querySelector('#speaking-audio-player-container');
 
     function updateTimerDisplay() {
       const mins = Math.floor(timerSeconds / 60).toString().padStart(2, '0');
@@ -443,6 +458,7 @@ export function renderSpeakingSimulator(container) {
         updateTimerDisplay();
         if (timerSeconds <= 0) {
           stopTimer();
+          stopRecording();
           speak(`Time is up for ${modeName}`);
         }
       }, 1000);
@@ -458,46 +474,122 @@ export function renderSpeakingSimulator(container) {
       startTimer(120, 'Speaking', 'var(--purple)');
     });
 
-    // Setup speech recognition
-    if (isSpeechSupported) {
-      recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      recognition.onresult = (event) => {
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            transcribedText += ' ' + event.results[i][0].transcript;
-          } else {
-            interim += event.results[i][0].transcript;
-          }
-        }
-        transcriptInput.value = (transcribedText + ' ' + interim).trim();
-      };
-
-      recognition.onerror = () => {
-        stopRecording();
-      };
+    function renderAudioPlayer(url) {
+      if (!audioContainer) return;
+      audioContainer.classList.remove('hidden');
+      audioContainer.innerHTML = `
+        <div class="glass-card-sm flex items-center justify-between flex-wrap gap-sm" style="padding:10px 16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;">
+          <div class="flex items-center gap-xs">
+            <span style="font-size:1.15rem;">🎧</span>
+            <div>
+              <div style="font-size:0.83rem; font-weight:700; color:var(--text-primary);">Bản ghi âm giọng nói vừa xong của bạn:</div>
+              <div class="text-xs text-muted">Nghe lại để kiểm tra ngữ điệu, trọng âm và độ trôi chảy</div>
+            </div>
+          </div>
+          <audio controls src="${url}" style="height:36px; max-width:100%; border-radius:18px; outline:none;"></audio>
+        </div>
+      `;
     }
 
-    btnStart?.addEventListener('click', () => {
+    btnStart?.addEventListener('click', async () => {
       if (isRecording) {
         stopRecording();
         return;
       }
 
       isRecording = true;
-      transcribedText = transcriptInput.value ? transcriptInput.value + ' ' : '';
+      shouldKeepRecording = true;
+      audioChunks = [];
+      const currentVal = transcriptInput.value ? transcriptInput.value.trim() : '';
+      transcribedText = currentVal ? currentVal + ' ' : '';
+
       btnStart.classList.remove('btn-primary');
       btnStart.classList.add('btn-danger');
       recordDot.style.background = '#ef4444';
-      recordBtnText.textContent = 'Đang thu âm... (Bấm để tạm dừng)';
+      recordBtnText.textContent = 'Đang thu âm... (Bấm để dừng)';
       btnStop.disabled = false;
 
-      if (recognition) {
-        try { recognition.start(); } catch (_) {}
+      // 1. Request microphone permission explicitly via getUserMedia
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          
+          if (typeof MediaRecorder !== 'undefined') {
+            try {
+              mediaRecorder = new MediaRecorder(mediaStream);
+              mediaRecorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) audioChunks.push(e.data);
+              };
+              mediaRecorder.onstop = () => {
+                if (audioChunks.length > 0) {
+                  const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                  if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+                  currentAudioUrl = URL.createObjectURL(blob);
+                  renderAudioPlayer(currentAudioUrl);
+                }
+              };
+              mediaRecorder.start(250);
+            } catch (mrErr) {
+              console.warn('MediaRecorder error:', mrErr);
+            }
+          }
+        }
+      } catch (streamErr) {
+        console.warn('getUserMedia permission error:', streamErr);
+        if (streamErr.name === 'NotAllowedError' || streamErr.name === 'PermissionDeniedError') {
+          showToast('Vui lòng cấp quyền Micro trên trình duyệt để ghi âm.', 'warning');
+          stopRecording();
+          return;
+        }
+      }
+
+      // 2. Setup and run SpeechRecognition
+      if (isSpeechSupported) {
+        try {
+          if (recognition) {
+            try { recognition.abort(); } catch (_) {}
+          }
+          recognition = new SpeechRecognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = 'en-US';
+          recognition.maxAlternatives = 1;
+
+          recognition.onresult = (event) => {
+            let interim = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+              if (event.results[i].isFinal) {
+                transcribedText += ' ' + event.results[i][0].transcript;
+              } else {
+                interim += event.results[i][0].transcript;
+              }
+            }
+            transcriptInput.value = (transcribedText + ' ' + interim).trim();
+          };
+
+          recognition.onerror = (event) => {
+            console.warn('SpeechRecognition error:', event.error);
+            // Do NOT abort on silence (no-speech) or aborted
+            if (event.error === 'no-speech' || event.error === 'aborted') {
+              return;
+            }
+            if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+              showToast('Trình duyệt chưa cấp quyền Micro cho Web Speech. Bạn có thể mở tab mới ↗', 'warning');
+              stopRecording();
+            }
+          };
+
+          recognition.onend = () => {
+            // Auto-resume if user is still recording
+            if (shouldKeepRecording) {
+              try { recognition.start(); } catch (_) {}
+            }
+          };
+
+          recognition.start();
+        } catch (recErr) {
+          console.warn('SpeechRecognition start error:', recErr);
+        }
       }
 
       startTimer(120, 'Speaking', '#ef4444');
@@ -508,20 +600,6 @@ export function renderSpeakingSimulator(container) {
       stopTimer();
       evaluateSpokenSpeech(transcriptInput.value.trim(), feedbackBox);
     });
-
-    function stopRecording() {
-      isRecording = false;
-      if (btnStart) {
-        btnStart.classList.remove('btn-danger');
-        btnStart.classList.add('btn-primary');
-        if (recordDot) recordDot.style.background = '#fff';
-        if (recordBtnText) recordBtnText.textContent = 'Bắt đầu Ghi âm & Trả lời';
-      }
-      if (btnStop) btnStop.disabled = true;
-      if (recognition) {
-        try { recognition.stop(); } catch (_) {}
-      }
-    }
   }
 
   async function evaluateSpokenSpeech(text, container) {
@@ -529,7 +607,11 @@ export function renderSpeakingSimulator(container) {
       container.classList.remove('hidden');
       container.innerHTML = `
         <div class="glass-card-sm" style="padding:16px; background:#fef2f2; border:1px solid #fecaca; border-radius:10px;">
-          <strong style="color:#b91c1c;">⚠️ Lời nói quá ngắn:</strong> Cần nói ít nhất 20-30 từ để hệ thống AI đánh giá được ngữ điệu, từ vựng và cấu trúc câu B2.
+          <strong style="color:#b91c1c;">⚠️ Chưa đủ độ dài để AI chấm điểm:</strong>
+          <p class="text-xs text-secondary mt-xs" style="line-height:1.6;">
+            AI cần ít nhất 15-20 từ tiếng Anh để đánh giá các tiêu chí VSTEP (Fluency, Grammar, Lexical, Band B2/C1).<br/>
+            ${currentAudioUrl ? '👉 Bạn đã thu âm thành công ở khung trên! Bạn có thể nghe lại và gõ bổ sung câu trả lời vào ô văn bản ở trên rồi bấm <strong>⏹️ Dừng & Đánh giá</strong>.' : '👉 Hãy bấm <strong>Bắt đầu Ghi âm & Trả lời</strong> và nói vào Micro, hoặc gõ trực tiếp câu trả lời vào khung.'}
+          </p>
         </div>
       `;
       return;
@@ -685,10 +767,34 @@ export function renderSpeakingSimulator(container) {
   }
 
   function stopRecording() {
+    shouldKeepRecording = false;
     isRecording = false;
+
     if (recognition) {
       try { recognition.stop(); } catch (_) {}
     }
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      try { mediaRecorder.stop(); } catch (_) {}
+    }
+    if (mediaStream) {
+      try {
+        mediaStream.getTracks().forEach(t => t.stop());
+      } catch (_) {}
+      mediaStream = null;
+    }
+
+    const btnStart = container.querySelector('#btn-start-record');
+    const recordDot = container.querySelector('#record-dot');
+    const recordBtnText = container.querySelector('#record-btn-text');
+    const btnStop = container.querySelector('#btn-stop-record');
+
+    if (btnStart) {
+      btnStart.classList.remove('btn-danger');
+      btnStart.classList.add('btn-primary');
+    }
+    if (recordDot) recordDot.style.background = '#fff';
+    if (recordBtnText) recordBtnText.textContent = 'Bắt đầu Ghi âm & Trả lời';
+    if (btnStop) btnStop.disabled = true;
   }
 
   render();

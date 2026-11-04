@@ -21,7 +21,7 @@ export function renderAITutor(container) {
   if (isSpeechSupported) {
     try {
       recognition = new SpeechRecognition();
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
     } catch (e) {
@@ -344,63 +344,117 @@ Discuss the topic deeply. Point out academic collocations they could use. Ask a 
     const micLabel = container.querySelector('#ai-mic-label');
     const chatInput = container.querySelector('#ai-chat-input');
 
-    if (!isSpeechSupported || !recognition) {
-      if (btnMic) {
-        btnMic.style.opacity = '0.5';
-        btnMic.title = 'Trình duyệt của bạn không hỗ trợ nhận diện giọng nói (Web Speech API). Vui lòng dùng Chrome hoặc Edge.';
-      }
+    if (!btnMic) return;
+
+    if (!isSpeechSupported) {
+      btnMic.style.opacity = '0.7';
+      btnMic.title = 'Trình duyệt chưa hỗ trợ Web Speech API. Bạn có thể gõ câu trả lời hoặc mở trong Chrome/Edge.';
+      btnMic.addEventListener('click', () => {
+        showToast('Trình duyệt chưa hỗ trợ Web Speech. Vui lòng gõ tin nhắn trực tiếp hoặc mở bằng Chrome/Edge.', 'info');
+      });
       return;
     }
 
-    recognition.onstart = () => {
-      isRecording = true;
-      btnMic.style.background = '#ef4444';
-      btnMic.style.color = '#ffffff';
-      btnMic.style.borderColor = '#ef4444';
-      if (micIcon) micIcon.textContent = '⏹️';
-      if (micLabel) micLabel.textContent = 'Đang nghe...';
-      chatInput.placeholder = 'Đang lắng nghe giọng nói tiếng Anh của bạn...';
-    };
+    let shouldKeepRecording = false;
 
-    recognition.onresult = (event) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          chatInput.value = (chatInput.value + ' ' + event.results[i][0].transcript).trim();
-        } else {
-          interim += event.results[i][0].transcript;
-        }
+    function initRecognition() {
+      if (recognition) {
+        try { recognition.abort(); } catch (_) {}
       }
-      if (interim) chatInput.placeholder = interim;
-    };
+      try {
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        recognition.maxAlternatives = 1;
 
-    recognition.onerror = (event) => {
-      console.warn('Speech recognition error:', event.error);
-      stopRecording();
-      if (event.error === 'not-allowed') {
-        showToast('Vui lòng cấp quyền truy cập Micro trên trình duyệt để luyện nói.', 'warning');
+        recognition.onstart = () => {
+          isRecording = true;
+          btnMic.style.background = '#ef4444';
+          btnMic.style.color = '#ffffff';
+          btnMic.style.borderColor = '#ef4444';
+          if (micIcon) micIcon.textContent = '⏹️';
+          if (micLabel) micLabel.textContent = 'Đang nghe...';
+          chatInput.placeholder = 'Đang lắng nghe giọng nói tiếng Anh của bạn... (Bấm nút đỏ để dừng)';
+        };
+
+        recognition.onresult = (event) => {
+          let interim = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              chatInput.value = (chatInput.value + ' ' + event.results[i][0].transcript).trim();
+            } else {
+              interim += event.results[i][0].transcript;
+            }
+          }
+          if (interim) chatInput.placeholder = interim;
+        };
+
+        recognition.onerror = (event) => {
+          console.warn('Speech recognition error:', event.error);
+          if (event.error === 'no-speech' || event.error === 'aborted') {
+            return;
+          }
+          stopRecording();
+          if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+            showToast('Vui lòng cấp quyền truy cập Micro trên trình duyệt để luyện nói.', 'warning');
+          }
+        };
+
+        recognition.onend = () => {
+          if (shouldKeepRecording) {
+            try {
+              recognition.start();
+              return;
+            } catch (_) {}
+          }
+          stopRecording();
+          chatInput.placeholder = 'Nhập câu trả lời tiếng Anh hoặc câu hỏi của bạn... (Bấm Enter để gửi)';
+        };
+      } catch (e) {
+        console.warn('SpeechRecognition init error:', e);
       }
-    };
+    }
 
-    recognition.onend = () => {
-      stopRecording();
-      chatInput.placeholder = 'Nhập câu trả lời tiếng Anh hoặc câu hỏi của bạn... (Bấm Enter để gửi)';
-    };
+    initRecognition();
 
-    btnMic.addEventListener('click', () => {
+    btnMic.addEventListener('click', async () => {
       if (isRecording) {
-        recognition.stop();
+        shouldKeepRecording = false;
+        if (recognition) {
+          try { recognition.stop(); } catch (_) {}
+        }
         stopRecording();
       } else {
+        shouldKeepRecording = true;
+        try {
+          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(t => t.stop());
+          }
+        } catch (permErr) {
+          console.warn('Microphone permission request error:', permErr);
+          if (permErr.name === 'NotAllowedError') {
+            showToast('Vui lòng cấp quyền Micro trên trình duyệt.', 'warning');
+            return;
+          }
+        }
+
+        initRecognition();
         try {
           recognition.start();
         } catch (e) {
           console.warn('Speech start error:', e);
+          try {
+            recognition.stop();
+            setTimeout(() => { try { recognition.start(); } catch (_) {} }, 200);
+          } catch (_) {}
         }
       }
     });
 
     function stopRecording() {
+      shouldKeepRecording = false;
       isRecording = false;
       btnMic.style.background = '';
       btnMic.style.color = '';

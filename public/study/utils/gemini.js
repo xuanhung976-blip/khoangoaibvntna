@@ -10,15 +10,19 @@ const BUILTIN_API_KEY = typeof atob !== 'undefined'
   ? atob('QVEuQWI4Uk42SjJad0M4VXJBUGJ6bVNaaEstbl9oMF9feUdmel9BSng0QWpzR3Y1MnVIaVE=')
   : '';
 const PREFERRED_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
   'gemini-flash-latest',
-  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
   'gemini-flash-lite-latest',
-  'gemini-2.5-flash-lite',
   'gemini-2.5-pro',
   'gemini-pro-latest'
 ];
 
 export const gemini = {
+  lastActiveModel: 'gemini-3.8-flash',
   getApiKey() {
     if (typeof localStorage !== 'undefined') {
       const stored = localStorage.getItem(STORAGE_KEY);
@@ -122,7 +126,10 @@ export const gemini = {
         if (res.ok) {
           const data = await res.json();
           const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          if (text) return text;
+          if (text) {
+            this.lastActiveModel = model;
+            return text;
+          }
         } else {
           const errData = await res.json().catch(() => ({}));
           lastError = new Error(errData?.error?.message || `HTTP ${res.status}`);
